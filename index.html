@@ -395,7 +395,7 @@ tr.overdue-row{background:#fff4f5;}
         <select class="filter-sel" id="filterArea" onchange="renderSchedule()"><option value="">All Areas</option></select>
         <select class="filter-sel" id="filterFreq" onchange="renderSchedule()">
           <option value="">All Frequencies</option>
-          <option>Daily</option><option>Weekly</option><option>Monthly</option><option>Quarterly</option><option>Annually</option>
+          <option>Daily</option><option>Weekly</option><option>15 Days (1st &amp; 3rd Week)</option><option>15 Days (2nd &amp; 4th Week)</option><option>Monthly</option><option>Quarterly</option><option>Annually</option>
         </select>
         <select class="filter-sel" id="filterStatus" onchange="renderSchedule()">
           <option value="">All Statuses</option><option>Scheduled</option><option>Pending</option><option>Done</option><option>Overdue</option>
@@ -757,7 +757,7 @@ tr.overdue-row{background:#fff4f5;}
       <div class="form-row">
         <label class="form-label">Frequency *</label>
         <select class="form-select" id="pmFreq" onchange="recalcNextDue()">
-          <option>Daily</option><option>Weekly</option><option selected>Monthly</option><option>Quarterly</option><option>Annually</option>
+          <option>Daily</option><option>Weekly</option><option>15 Days (1st &amp; 3rd Week)</option><option>15 Days (2nd &amp; 4th Week)</option><option selected>Monthly</option><option>Quarterly</option><option>Annually</option>
         </select>
       </div>
       <div class="form-row">
@@ -778,7 +778,8 @@ tr.overdue-row{background:#fff4f5;}
     <div class="form-grid-2">
       <div class="form-row">
         <label class="form-label">Plan Start Date * <span style="color:var(--text3);font-size:10px;font-weight:400;">(first maintenance date)</span></label>
-        <input class="form-input" id="pmPlanDate" type="date" oninput="recalcNextDue()">
+        <input class="form-input" id="pmPlanDate" type="date" oninput="snapPlanDateToSunday(); recalcNextDue();">
+        <div style="font-size:11px;color:var(--teal);margin-top:4px;" id="planDateHint"></div>
       </div>
       <div class="form-row">
         <label class="form-label">Next Due Date <span style="color:var(--teal);font-size:10px;">(auto-calculated)</span></label>
@@ -790,8 +791,9 @@ tr.overdue-row{background:#fff4f5;}
 
     <!-- Live schedule preview -->
     <div id="pmSchedulePreview" style="display:none;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:12px 14px;margin-bottom:16px;">
-      <div style="font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:var(--teal);margin-bottom:8px;font-weight:700;">📅 Schedule Preview</div>
-      <div id="pmScheduleRows" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:var(--teal);margin-bottom:8px;font-weight:700;">📅 Yearly Schedule Preview — Sundays Only</div>
+      <div id="pmScheduleSummary" style="font-size:12px;color:var(--text2);margin-bottom:8px;"></div>
+      <div id="pmScheduleRows" style="display:flex;flex-wrap:wrap;gap:8px;max-height:260px;overflow-y:auto;"></div>
       <div style="margin-top:8px;font-size:11px;color:var(--text3);">🔔 Alert will fire <span id="pmLeadLabel" style="color:var(--yellow);font-weight:700;"></span> before each due date</div>
     </div>
 
@@ -903,6 +905,29 @@ tr.overdue-row{background:#fff4f5;}
       <button id="evidenceClearBtn" onclick="clearEvidence()" style="display:none;margin-top:5px;font-size:11px;color:var(--red);background:none;border:none;cursor:pointer;padding:0;">✕ Remove photo</button>
     </div>
     <div id="gapPreview" style="margin-bottom:12px;"></div>
+
+    <!-- Next Due Date Choice -->
+    <div class="form-row" id="nextDueChoiceRow">
+      <label class="form-label">Next Due Date After Closure *</label>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px;">
+        <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;" id="nextDueAdvanceLbl">
+          <input type="radio" name="nextDueChoice" value="advance" checked style="margin-top:2px;accent-color:var(--teal);" onchange="updateNextDuePreview()">
+          <div>
+            <div style="font-weight:600;font-size:13px;color:var(--text);">📅 Advance to Next Occurrence</div>
+            <div style="font-size:11px;color:var(--text2);margin-top:2px;" id="nextDueAdvanceHint">Calculated from plan date (Sunday-aligned)</div>
+          </div>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;" id="nextDueSameLbl">
+          <input type="radio" name="nextDueChoice" value="same" style="margin-top:2px;accent-color:var(--accent);" onchange="updateNextDuePreview()">
+          <div>
+            <div style="font-weight:600;font-size:13px;color:var(--text);">🔁 Keep Same Scheduled Date</div>
+            <div style="font-size:11px;color:var(--text2);margin-top:2px;" id="nextDueSameHint">PM re-opens on the same planned Sunday (re-do / re-inspect)</div>
+          </div>
+        </label>
+      </div>
+      <div id="nextDueResultHint" style="margin-top:8px;padding:8px 12px;background:rgba(10,124,112,.08);border:1px solid rgba(10,124,112,.3);border-radius:4px;font-size:12px;color:var(--teal);display:none;"></div>
+    </div>
+
     <div class="form-actions">
       <button class="btn-outline" onclick="closeAttendModal()">Cancel</button>
       <button class="btn-action" onclick="saveAttendance()">Confirm Attendance</button>
@@ -1080,7 +1105,7 @@ function fbSet(path, data) { if (firebaseMode) db.ref(path).set(data); }
 function fbRemove(path)    { if (firebaseMode) db.ref(path).remove(); }
 
 function seedSampleTasks() {
-  const d = n => { const dt = new Date(); dt.setDate(dt.getDate()+n); return dt.toISOString().split('T')[0]; };
+  const d = n => { const dt = new Date(); dt.setDate(dt.getDate()+n); return localDateStr(dt); };
   state.pmTasks = [
     {id:'pm1',asset:'Compressor C-101 [C-101]',dept:'Utilities',freq:'Monthly',planDate:d(-30),nextDue:d(1),assignedTo:'Anand Verma',deptOwner:'Priya Singh',desc:'Check oil level, belt tension, filter cleaning',priority:'High',status:'Pending'},
     {id:'pm2',asset:'Overhead Crane OC-02 [OC-02]',dept:'Production',freq:'Weekly',planDate:d(-7),nextDue:d(0),assignedTo:'Suresh Gupta',deptOwner:'Priya Singh',desc:'Lubrication, wire rope inspection',priority:'Critical',status:'Overdue'},
@@ -1234,7 +1259,9 @@ function initApp() {
 // =========================================================
 // HELPERS
 // =========================================================
-const today  = () => new Date().toISOString().split('T')[0];
+// Timezone-safe: returns YYYY-MM-DD using LOCAL date (not UTC), preventing IST -1 day bug
+const localDateStr = d => { const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),dd=String(d.getDate()).padStart(2,'0'); return y+'-'+m+'-'+dd; };
+const today  = () => localDateStr(new Date());
 const daysDiff = (a,b) => Math.round((new Date(a+'T00:00:00') - new Date(b+'T00:00:00'))/86400000);
 const fmtDate  = d => d ? new Date(d+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : '—';
 
@@ -1253,10 +1280,73 @@ function computeStatus(t) {
   return 'Scheduled';
 }
 
+// Returns YYYY-MM-DD for the Sunday on or after the given date
+function snapToSunday(date) {
+  const d = new Date(date + 'T00:00:00');
+  const day = d.getDay(); // 0=Sun, 1=Mon, ... 6=Sat
+  if (day !== 0) d.setDate(d.getDate() + (7 - day));
+  return localDateStr(d);
+}
+
+// Returns the Nth Sunday (1=1st, 2=2nd, 3=3rd, 4=4th, 5=5th) of a given year+month
+function nthSundayOfMonth(year, month /* 0-11 */, n) {
+  const first = new Date(year, month, 1);
+  const offset = (7 - first.getDay()) % 7; // days until first Sunday
+  const day = 1 + offset + (n - 1) * 7;
+  const last = new Date(year, month + 1, 0).getDate();
+  if (day > last) return null;
+  const dt = new Date(year, month, day);
+  return localDateStr(dt);
+}
+
 function nextDueAfter(date, freq) {
-  const d = new Date(date+'T00:00:00');
-  d.setDate(d.getDate() + ({Daily:1,Weekly:7,Monthly:30,Quarterly:91,Annually:365}[freq]||30));
-  return d.toISOString().split('T')[0];
+  const d = new Date(date + 'T00:00:00');
+  // First, advance the date by one frequency period
+  if (freq === '15 Days (1st & 3rd Week)') {
+    // Find the next 1st or 3rd Sunday strictly after `date`
+    return nextPatternedSunday(date, [1, 3]);
+  }
+  if (freq === '15 Days (2nd & 4th Week)') {
+    return nextPatternedSunday(date, [2, 4]);
+  }
+  const step = {Daily:1, Weekly:7, Monthly:30, Quarterly:91, Annually:365}[freq] || 30;
+  d.setDate(d.getDate() + step);
+  // Snap to the next Sunday (weekdays may shift forward, but Sunday only)
+  return snapToSunday(localDateStr(d));
+}
+
+// Find the next Sunday strictly after `fromDate` that falls in one of the
+// given week numbers (e.g. [1,3] = 1st & 3rd Sunday of the month).
+function nextPatternedSunday(fromDate, weekNums) {
+  const start = new Date(fromDate + 'T00:00:00');
+  // Look ahead up to 3 months to be safe
+  for (let m = 0; m < 4; m++) {
+    const probe = new Date(start.getFullYear(), start.getMonth() + m, 1);
+    for (const n of weekNums) {
+      const s = nthSundayOfMonth(probe.getFullYear(), probe.getMonth(), n);
+      if (s && new Date(s + 'T00:00:00') > start) return s;
+    }
+  }
+  // Fallback: one week ahead, snapped to Sunday
+  const d = new Date(start); d.setDate(d.getDate() + 7);
+  return snapToSunday(localDateStr(d));
+}
+
+// Generate a full year's worth of Sunday-only due dates starting from planDate
+function generateYearlyDueDates(planDate, freq) {
+  const dates = [];
+  const endDate = new Date(planDate + 'T00:00:00');
+  endDate.setFullYear(endDate.getFullYear() + 1);
+  let cur = planDate;
+  let safety = 0;
+  while (safety++ < 400) {
+    const next = nextDueAfter(cur, freq);
+    if (!next) break;
+    if (new Date(next + 'T00:00:00') > endDate) break;
+    dates.push(next);
+    cur = next;
+  }
+  return dates;
 }
 
 const getGapClass = g => g===null||g===undefined?'pending':g===0?'ontime':g>0?'late':'early';
@@ -1338,16 +1428,32 @@ function refreshVisible() {
 let _charts = {};
 
 function renderDashboard() {
-  const td = today();
-  const total   = state.pmTasks.length;
-  const done    = state.pmTasks.filter(t=>t.status==='Done').length;
-  const overdue = state.pmTasks.filter(t=>computeStatus(t)==='Overdue').length;
-  const soon    = state.pmTasks.filter(t=>{ const d=daysDiff(t.nextDue,td); return d>=0&&d<=3&&t.status!=='Done'; }).length;
-  const scheduled = state.pmTasks.filter(t=>computeStatus(t)==='Scheduled').length;
-  const pct     = total ? Math.round(done/total*100) : 0;
+  const td   = today();
+  const role = state.currentUser?.role;
+  const me   = state.currentUser?.name;
+
+  // ── Role-based task filter (same logic as renderSchedule) ──
+  const tasks = state.pmTasks.filter(t => {
+    if (role === 'Maintenance')      return t.assignedTo === me;
+    if (role === 'Technician')       return t.assignedTo === me;
+    if (role === 'Department Owner') return t.deptOwner  === me;
+    return true; // Admin and Manager see all
+  });
+
+  const total    = tasks.length;
+  const done     = tasks.filter(t=>t.status==='Done').length;
+  const overdue  = tasks.filter(t=>computeStatus(t)==='Overdue').length;
+  const soon     = tasks.filter(t=>{ const d=daysDiff(t.nextDue,td); return d>=0&&d<=3&&t.status!=='Done'; }).length;
+  const scheduled= tasks.filter(t=>computeStatus(t)==='Scheduled').length;
+  const pct      = total ? Math.round(done/total*100) : 0;
+
+  // Role label for heading
+  const scopeLabel = (role==='Maintenance'||role==='Technician') ? ` — ${me}'s Tasks`
+                   : role==='Department Owner' ? ` — ${me}'s Department`
+                   : '';
 
   document.getElementById('statsRow').innerHTML = `
-    <div class="stat-card"><div class="stat-label">Total PM Tasks</div><div class="stat-value accent">${total}</div></div>
+    <div class="stat-card"><div class="stat-label">Total PM Tasks${scopeLabel}</div><div class="stat-value accent">${total}</div></div>
     <div class="stat-card"><div class="stat-label">Completed</div><div class="stat-value green">${done}</div></div>
     <div class="stat-card"><div class="stat-label">Overdue</div><div class="stat-value red">${overdue}</div></div>
     <div class="stat-card"><div class="stat-label">Due ≤ Lead Time</div><div class="stat-value yellow">${soon}</div></div>
@@ -1359,13 +1465,13 @@ function renderDashboard() {
     ['#28a745','#dc3545','#ffc107','#1d6fa5']);
 
   // ── Chart 2: Tasks by Department bar ──
-  const depts = [...new Set(state.pmTasks.map(t=>t.dept))].filter(Boolean);
-  const deptCounts = depts.map(d=>state.pmTasks.filter(t=>t.dept===d).length);
+  const depts = [...new Set(tasks.map(t=>t.dept))].filter(Boolean);
+  const deptCounts = depts.map(d=>tasks.filter(t=>t.dept===d).length);
   drawBar('chartDept', depts, deptCounts, '#0d9488', 'Tasks');
 
   // ── Chart 3: Compliance % by Dept ──
   const compPct = depts.map(d=>{
-    const dtasks = state.pmTasks.filter(t=>t.dept===d);
+    const dtasks = tasks.filter(t=>t.dept===d);
     const ddone  = dtasks.filter(t=>t.status==='Done').length;
     return dtasks.length ? Math.round(ddone/dtasks.length*100) : 0;
   });
@@ -1373,16 +1479,17 @@ function renderDashboard() {
 
   // ── Chart 4: Frequency breakdown donut ──
   const freqs = ['Daily','Weekly','Monthly','Quarterly','Annually'];
-  const freqCounts = freqs.map(f=>state.pmTasks.filter(t=>t.freq===f).length);
+  const freqCounts = freqs.map(f=>tasks.filter(t=>t.freq===f).length);
   drawDonut('chartFreq', freqs, freqCounts, ['#0d9488','#1d6fa5','#f0a500','#e05a2b','#28a745']);
 
-  // ── Tables ──
-  const up = state.pmTasks.filter(t=>{ const d=daysDiff(t.nextDue,td); return d>=0&&d<=7&&t.status!=='Done'; }).sort((a,b)=>a.nextDue.localeCompare(b.nextDue));
+  // ── Upcoming table ──
+  const up = tasks.filter(t=>{ const d=daysDiff(t.nextDue,td); return d>=0&&d<=7&&t.status!=='Done'; }).sort((a,b)=>a.nextDue.localeCompare(b.nextDue));
   document.getElementById('dashUpcoming').innerHTML = up.length
     ? up.map(t=>`<tr class="${daysDiff(t.nextDue,td)<=3?'due-soon':''}"><td><strong>${t.asset}</strong></td><td>${t.dept}</td><td>${freqBadge(t.freq)}</td><td>${fmtDate(t.nextDue)}</td><td>${t.assignedTo||'—'}</td><td>${statusBadge(computeStatus(t))}</td></tr>`).join('')
     : '<tr><td colspan="6" class="empty-state">No tasks due in next 7 days</td></tr>';
 
-  const ov = state.pmTasks.filter(t=>computeStatus(t)==='Overdue');
+  // ── Overdue table ──
+  const ov = tasks.filter(t=>computeStatus(t)==='Overdue');
   document.getElementById('dashOverdue').innerHTML = ov.length
     ? ov.map(t=>`<tr class="overdue-row"><td><strong>${t.asset}</strong></td><td>${t.dept}</td><td>${freqBadge(t.freq)}</td><td>${fmtDate(t.nextDue)}</td><td><span style="color:var(--red);font-weight:700;">${Math.abs(daysDiff(t.nextDue,td))}d</span></td><td>${statusBadge('Overdue')}</td></tr>`).join('')
     : '<tr><td colspan="6" class="empty-state" style="color:var(--green)">✓ No overdue tasks</td></tr>';
@@ -1787,8 +1894,8 @@ function renderSchedule() {
     const day = now.getDay();
     const mon = new Date(now); mon.setDate(now.getDate() - (day===0?6:day-1));
     const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
-    dateFrom = mon.toISOString().split('T')[0];
-    dateTo   = sun.toISOString().split('T')[0];
+    dateFrom = localDateStr(mon);
+    dateTo   = localDateStr(sun);
   } else if (mode === 'overdue') {
     // handled below in filter
   }
@@ -1809,10 +1916,11 @@ function renderSchedule() {
       if (t.nextDue < dateFrom) return false;
     }
 
-    // Role-based row visibility (unchanged)
-    if (role === 'Department Owner') return t.deptOwner === state.currentUser.name;
+    // Role-based row visibility
+    if (role === 'Department Owner') return t.deptOwner  === state.currentUser.name;
     if (role === 'Technician')       return t.assignedTo === state.currentUser.name;
-    // Admin, Maintenance, Manager see all tasks
+    if (role === 'Maintenance')      return t.assignedTo === state.currentUser.name;
+    // Admin and Manager see all tasks
     return true;
   });
 
@@ -1874,14 +1982,25 @@ function renderSchedule() {
 // ALERTS
 // =========================================================
 function checkAlerts() {
-  const alerts = state.pmTasks.filter(t=>{ const s=computeStatus(t); return s==='Overdue'||s==='Pending'; });
+  // Filter alerts based on the current user's role so users see only their own counts
+  const role = state.currentUser?.role;
+  const me   = state.currentUser?.name;
+  const visible = state.pmTasks.filter(t => {
+    if (role === 'Technician')       return t.assignedTo === me;
+    if (role === 'Maintenance')      return t.assignedTo === me;
+    if (role === 'Department Owner') return t.deptOwner  === me;
+    return true; // Admin, Manager see all
+  });
+  const alerts = visible.filter(t=>{ const s=computeStatus(t); return s==='Overdue'||s==='Pending'; });
   const cnt = alerts.length;
   const b = document.getElementById('alertBadge');
   if (b) { b.style.display=cnt?'inline':'none'; b.textContent=cnt; }
-  if (cnt > 0) {
-    document.getElementById('alertText').textContent = `${cnt} PM task${cnt>1?'s':''} need attention — overdue or within lead time.`;
-    document.getElementById('alertPopup').classList.add('show');
-  }
+
+  // The alert count is already shown as a badge on the "Alerts" tab.
+  // The top banner is redundant (and was overlapping the Logout button),
+  // so we keep it hidden and rely on the badge instead.
+  const pop = document.getElementById('alertPopup');
+  if (pop) pop.classList.remove('show');
 }
 
 function renderAlerts() {
@@ -2209,7 +2328,23 @@ function closePMModal() {
   editingPMId = null;
 }
 
-// Live recalculate Next Due Date and show schedule preview
+// Live recalculate Next Due Date and show schedule preview (yearly, Sundays only)
+// Snap the Plan Date input to the nearest Sunday on/after the chosen date
+function snapPlanDateToSunday() {
+  const inp = document.getElementById('pmPlanDate');
+  const hint = document.getElementById('planDateHint');
+  if (!inp.value) { if (hint) hint.textContent = ''; return; }
+  const d = new Date(inp.value + 'T00:00:00');
+  const day = d.getDay(); // 0=Sun
+  if (day !== 0) {
+    const snapped = snapToSunday(inp.value);
+    inp.value = snapped;
+    if (hint) hint.textContent = '📅 Auto-snapped to Sunday: ' + new Date(snapped + 'T00:00:00').toLocaleDateString('en-IN', {day:'2-digit', month:'short', year:'numeric'});
+  } else {
+    if (hint) hint.textContent = '✓ Already a Sunday';
+  }
+}
+
 function recalcNextDue() {
   const planDate = document.getElementById('pmPlanDate').value;
   const freq     = document.getElementById('pmFreq').value;
@@ -2226,36 +2361,36 @@ function recalcNextDue() {
   }
 
   const nextDue = nextDueAfter(planDate, freq);
-  dispEl.value = fmtDate(nextDue);
+  dispEl.value = fmtDate(nextDue) + ' (Sunday)';
 
-  // Build schedule preview — next 4 occurrences
-  const freqMap = {Daily:1, Weekly:7, Monthly:30, Quarterly:91, Annually:365};
-  const days = freqMap[freq] || 30;
-  let cur = new Date(planDate + 'T00:00:00');
-  const occurrences = [];
-  for (let i = 0; i < 4; i++) {
-    cur = new Date(cur);
-    cur.setDate(cur.getDate() + days);
-    occurrences.push(new Date(cur));
-  }
+  // Build full yearly schedule preview — all Sundays
+  const occurrences = generateYearlyDueDates(planDate, freq);
 
   const td = new Date(today() + 'T00:00:00');
-  rowsEl.innerHTML = occurrences.map((dt, i) => {
-    const dStr = dt.toISOString().split('T')[0];
-    const diff = Math.round((dt - td) / 86400000);
-    const alertDate = new Date(dt);
-    alertDate.setDate(alertDate.getDate() - leadTime);
-    const aStr = alertDate.toISOString().split('T')[0];
-    const isFirst = i === 0;
-    const isPast = diff < 0;
-    const isNear = diff >= 0 && diff <= leadTime;
-    const color = isPast ? 'var(--red)' : isNear ? 'var(--yellow)' : 'var(--teal)';
-    return `<div style="background:var(--surface3);border:1px solid var(--border);border-radius:4px;padding:6px 10px;font-size:12px;">
-      <div style="color:${color};font-weight:700;">${isFirst ? '1st Due' : 'Due '+(i+1)}</div>
-      <div style="color:var(--text);">${fmtDate(dStr)}</div>
-      <div style="color:var(--text3);font-size:10px;">🔔 Alert: ${fmtDate(aStr)}</div>
-    </div>`;
-  }).join('');
+  rowsEl.innerHTML = occurrences.length
+    ? occurrences.map((dStr, i) => {
+        const dt = new Date(dStr + 'T00:00:00');
+        const diff = Math.round((dt - td) / 86400000);
+        const alertDate = new Date(dt);
+        alertDate.setDate(alertDate.getDate() - leadTime);
+        const aStr = localDateStr(alertDate);
+        const isFirst = i === 0;
+        const isPast = diff < 0;
+        const isNear = diff >= 0 && diff <= leadTime;
+        const color = isPast ? 'var(--red)' : isNear ? 'var(--yellow)' : 'var(--teal)';
+        return `<div style="background:var(--surface3);border:1px solid var(--border);border-radius:4px;padding:6px 10px;font-size:12px;min-width:140px;">
+          <div style="color:${color};font-weight:700;">${isFirst ? '1st Due' : 'Due '+(i+1)}</div>
+          <div style="color:var(--text);">${fmtDate(dStr)}</div>
+          <div style="color:var(--text3);font-size:10px;">📅 Sunday · 🔔 ${fmtDate(aStr)}</div>
+        </div>`;
+      }).join('')
+    : '<div style="color:var(--text3);font-size:12px;">No occurrences generated.</div>';
+
+  // Summary line
+  const summary = document.getElementById('pmScheduleSummary');
+  if (summary) {
+    summary.textContent = `${occurrences.length} PM occurrence${occurrences.length!==1?'s':''} scheduled over the next year — all on Sundays.`;
+  }
 
   leadLbl.textContent = leadTime + ' day' + (leadTime > 1 ? 's' : '');
   previewEl.style.display = 'block';
@@ -2269,37 +2404,77 @@ function savePM() {
   const leadTime = parseInt(document.getElementById('pmLeadTime').value) || 3;
   if (!asset || !dept || !planDate) { alert('Department, Asset name and Plan Date are required.'); return; }
 
-  // nextDue = planDate + one frequency period
-  const nextDue = nextDueAfter(planDate, freq);
+  const area       = document.getElementById('pmArea')?.value || '';
+  const assignedTo = document.getElementById('pmAssigned').value;
+  const deptOwner  = document.getElementById('pmDeptOwner').value;
+  const desc       = document.getElementById('pmDesc').value;
+  const priority   = document.getElementById('pmPriority').value;
 
-  const area = document.getElementById('pmArea')?.value||'';
   if (editingPMId) {
+    // Editing a single occurrence — keep single-task update behavior
+    const nextDue = nextDueAfter(planDate, freq);
+    // Snap planDate to the Sunday of nextDue (so Plan Date column always shows a Sunday)
+    const snappedPlanDate = snapToSunday(planDate);
     const t = state.pmTasks.find(x=>x.id===editingPMId);
-    Object.assign(t, {asset, dept, area, freq, planDate, nextDue, leadTime,
-      assignedTo: document.getElementById('pmAssigned').value,
-      deptOwner:  document.getElementById('pmDeptOwner').value,
-      desc:       document.getElementById('pmDesc').value,
-      priority:   document.getElementById('pmPriority').value
-    });
+    Object.assign(t, {asset, dept, area, freq, planDate: snappedPlanDate, nextDue, leadTime,
+      assignedTo, deptOwner, desc, priority});
     fbSet('pmTasks/'+t.id, t);
   } else {
-    const nt = {id:'pm'+Date.now(), asset, dept, area, freq, planDate, nextDue, leadTime,
-      assignedTo: document.getElementById('pmAssigned').value,
-      deptOwner:  document.getElementById('pmDeptOwner').value,
-      desc:       document.getElementById('pmDesc').value,
-      priority:   document.getElementById('pmPriority').value,
-      status:'Scheduled'};
-    state.pmTasks.push(nt);
-    fbSet('pmTasks/'+nt.id, nt);
+    // New PM → generate a full year of occurrences, all on Sundays
+    const dueDates = generateYearlyDueDates(planDate, freq);
+    if (!dueDates.length) {
+      alert('No Sunday due dates could be generated for the selected frequency.');
+      return;
+    }
+    const batchId = 'pmb' + Date.now();
+    dueDates.forEach((dueStr, idx) => {
+      // planDate for each occurrence = the Sunday of the previous due date (or first Sunday on/after user planDate for idx 0)
+      const occPlan = idx === 0 ? snapToSunday(planDate) : dueDates[idx - 1];
+      const nt = {
+        id: 'pm' + Date.now() + '_' + idx,
+        batchId,
+        occurrence: idx + 1,
+        totalOccurrences: dueDates.length,
+        asset, dept, area, freq,
+        planDate: occPlan,
+        nextDue: dueStr,
+        leadTime,
+        assignedTo, deptOwner, desc, priority,
+        status: 'Scheduled'
+      };
+      state.pmTasks.push(nt);
+      fbSet('pmTasks/' + nt.id, nt);
+    });
+    // Friendly confirmation
+    alert(`✓ Created ${dueDates.length} PM occurrence${dueDates.length>1?'s':''} for the next year — all on Sundays.`);
   }
   closePMModal();
   if (!firebaseMode) { renderSchedule(); checkAlerts(); }
 }
 
 function deletePM(id) {
-  if (!confirm('Delete this PM task?')) return;
-  state.pmTasks = state.pmTasks.filter(t=>t.id!==id);
-  fbRemove('pmTasks/'+id);
+  const t = state.pmTasks.find(x => x.id === id);
+  if (!t) return;
+  const siblings = t.batchId ? state.pmTasks.filter(x => x.batchId === t.batchId) : [];
+  if (siblings.length > 1) {
+    const msg = `This PM is part of a yearly plan with ${siblings.length} occurrences.\n\n` +
+                `Click OK to delete the ENTIRE yearly plan (${siblings.length} tasks).\n` +
+                `Click Cancel to delete ONLY this single occurrence.`;
+    if (confirm(msg)) {
+      // Delete the whole batch
+      const ids = siblings.map(s => s.id);
+      state.pmTasks = state.pmTasks.filter(x => !ids.includes(x.id));
+      ids.forEach(i => fbRemove('pmTasks/' + i));
+    } else {
+      if (!confirm('Delete just this single occurrence?')) return;
+      state.pmTasks = state.pmTasks.filter(x => x.id !== id);
+      fbRemove('pmTasks/' + id);
+    }
+  } else {
+    if (!confirm('Delete this PM task?')) return;
+    state.pmTasks = state.pmTasks.filter(x => x.id !== id);
+    fbRemove('pmTasks/' + id);
+  }
   if (!firebaseMode) { renderSchedule(); renderDashboard(); checkAlerts(); }
 }
 
@@ -2334,12 +2509,16 @@ function openAttend(id) {
   attendingPMId = id;
   const t = state.pmTasks.find(x=>x.id===id);
   document.getElementById('attAssetLabel').textContent = t.asset + ' — ' + t.dept;
-  document.getElementById('attPlanLabel').textContent  = fmtDate(t.nextDue);
+  document.getElementById('attPlanLabel').textContent  = fmtDate(t.planDate) + (t.nextDue !== t.planDate ? '  →  Next Due: ' + fmtDate(t.nextDue) : '');
   document.getElementById('attActualDate').value = today();
   document.getElementById('attBy').value = state.currentUser.name;
   document.getElementById('attRemarks').value = '';
   // Reset spare parts
   document.getElementById('sparePartsContainer').innerHTML = '';
+  // Reset next due choice to default (advance)
+  const radios = document.querySelectorAll('input[name="nextDueChoice"]');
+  radios.forEach(r => { r.checked = (r.value === 'advance'); });
+  updateNextDuePreview();
   updateGapPreview();
   document.getElementById('attendModal').classList.add('open');
 }
@@ -2422,6 +2601,38 @@ function viewEvidencePhoto(logId) {
     </body></html>`);
 }
 
+function updateNextDuePreview() {
+  if (!attendingPMId) return;
+  const t = state.pmTasks.find(x=>x.id===attendingPMId); if (!t) return;
+  const choice = document.querySelector('input[name="nextDueChoice"]:checked')?.value || 'advance';
+  const resultHint = document.getElementById('nextDueResultHint');
+  const advLbl = document.getElementById('nextDueAdvanceLbl');
+  const sameLbl = document.getElementById('nextDueSameLbl');
+
+  // Highlight selected
+  if (advLbl) advLbl.style.borderColor = choice === 'advance' ? 'var(--teal)' : 'var(--border)';
+  if (sameLbl) sameLbl.style.borderColor = choice === 'same' ? 'var(--accent)' : 'var(--border)';
+
+  if (!resultHint) return;
+  if (choice === 'advance') {
+    const nextD = nextDueAfter(t.nextDue, t.freq);
+    resultHint.style.display = 'block';
+    resultHint.style.color = 'var(--teal)';
+    resultHint.style.borderColor = 'rgba(10,124,112,.3)';
+    resultHint.style.background = 'rgba(10,124,112,.08)';
+    resultHint.innerHTML = `📅 Next PM will be due on: <strong>${fmtDate(nextD)}</strong> (Sunday)`;
+    document.getElementById('nextDueAdvanceHint').textContent = `Next Sunday occurrence after ${fmtDate(t.nextDue)}`;
+  } else {
+    resultHint.style.display = 'block';
+    resultHint.style.color = 'var(--accent)';
+    resultHint.style.borderColor = 'rgba(184,110,0,.3)';
+    resultHint.style.background = 'rgba(184,110,0,.08)';
+    resultHint.innerHTML = `🔁 PM will remain open at: <strong>${fmtDate(t.nextDue)}</strong> (same planned Sunday — task re-opens as Pending)`;
+    document.getElementById('nextDueSameHint').textContent = `Task will reopen on ${fmtDate(t.nextDue)} for re-inspection`;
+  }
+}
+
+
 function updateGapPreview() {
   if (!attendingPMId) return;
   const t = state.pmTasks.find(x=>x.id===attendingPMId); if (!t) return;
@@ -2454,7 +2665,7 @@ function saveAttendance() {
 
   const gap = daysDiff(actual, t.nextDue);
   const log = {id:'att'+Date.now(), pmId:t.id, asset:t.asset, dept:t.dept, freq:t.freq,
-    planDate:t.nextDue, actualDate:actual, attendedBy:by,
+    planDate:t.planDate, actualDate:actual, attendedBy:by,
     remarks:document.getElementById('attRemarks').value, gap,
     spareParts: spareParts.length ? spareParts : null,
     evidencePhoto: window._evidenceBase64 || null};
@@ -2462,8 +2673,17 @@ function saveAttendance() {
   state.attendance.push(log);
   fbSet('attendance/'+log.id, log);
 
+  // Determine next due date based on user's choice
+  const nextDueChoice = document.querySelector('input[name="nextDueChoice"]:checked')?.value || 'advance';
   t.status  = 'Done';
-  t.nextDue = nextDueAfter(actual, t.freq);
+  if (nextDueChoice === 'same') {
+    // Keep the same planned date (task re-opens at same Sunday slot)
+    t.status  = 'Pending';
+    // nextDue stays unchanged — just reopen the task
+  } else {
+    // Advance to next occurrence — always calculated from the PLAN date (t.nextDue), not actual date
+    t.nextDue = nextDueAfter(t.nextDue, t.freq);
+  }
   fbSet('pmTasks/'+t.id, t);
 
   // Create pending confirmation for Dept Owner
@@ -3164,7 +3384,7 @@ function saveOverdueClose() {
     asset: t.asset,
     dept: t.dept,
     freq: t.freq,
-    planDate: t.nextDue,
+    planDate: t.planDate,
     actualDate: today(),
     attendedBy: state.currentUser.name,
     remarks: '[EXCUSED OVERDUE] Reason: ' + finalReason + (remarks ? ' | ' + remarks : ''),
