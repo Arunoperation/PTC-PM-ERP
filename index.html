@@ -2005,7 +2005,17 @@ function checkAlerts() {
 
 function renderAlerts() {
   const td = today();
-  const alerts = state.pmTasks.filter(t=>{ const s=computeStatus(t); return s==='Overdue'||s==='Pending'; });
+  // Filter PM tasks by the current user's role so each user sees only their own alerts.
+  // (Admin and Manager continue to see everything — same rule used in checkAlerts for the badge.)
+  const role = state.currentUser?.role;
+  const me   = state.currentUser?.name;
+  const visible = state.pmTasks.filter(t => {
+    if (role === 'Technician')       return t.assignedTo === me;
+    if (role === 'Maintenance')      return t.assignedTo === me;
+    if (role === 'Department Owner') return t.deptOwner  === me;
+    return true; // Admin, Manager see all
+  });
+  const alerts = visible.filter(t=>{ const s=computeStatus(t); return s==='Overdue'||s==='Pending'; });
   const tb = document.getElementById('alertsTbody');
   if (!alerts.length) { tb.innerHTML='<tr><td colspan="7" class="empty-state" style="color:var(--green)">✓ No active alerts</td></tr>'; return; }
   tb.innerHTML = alerts.map(t => {
