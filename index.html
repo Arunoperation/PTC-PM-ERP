@@ -2519,8 +2519,10 @@ function openAttend(id) {
   attendingPMId = id;
   const t = state.pmTasks.find(x=>x.id===id);
   document.getElementById('attAssetLabel').textContent = t.asset + ' — ' + t.dept;
-  document.getElementById('attPlanLabel').textContent  = fmtDate(t.planDate) + (t.nextDue !== t.planDate ? '  →  Next Due: ' + fmtDate(t.nextDue) : '');
-  document.getElementById('attActualDate').value = today();
+  // Show the actual planned Sunday (planDate) — e.g. 19 Apr, not the nextDue which is the following period
+  document.getElementById('attPlanLabel').textContent  = fmtDate(t.planDate) + ' (Sunday)';
+  // Default actual date to the plan Sunday so gap starts at On-Time; user can change if done on a different day
+  document.getElementById('attActualDate').value = t.planDate;
   document.getElementById('attBy').value = state.currentUser.name;
   document.getElementById('attRemarks').value = '';
   // Reset spare parts
@@ -2647,10 +2649,10 @@ function updateGapPreview() {
   if (!attendingPMId) return;
   const t = state.pmTasks.find(x=>x.id===attendingPMId); if (!t) return;
   const actual = document.getElementById('attActualDate').value; if (!actual) return;
-  const gap = daysDiff(actual, t.nextDue);
+  const gap = daysDiff(actual, t.planDate);
   document.getElementById('gapPreview').innerHTML = `
     <div style="background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:10px 14px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
-      <div><span style="color:var(--text2);font-size:11px;text-transform:uppercase;letter-spacing:1px;">Plan Date</span><br><strong>${fmtDate(t.nextDue)}</strong></div>
+      <div><span style="color:var(--text2);font-size:11px;text-transform:uppercase;letter-spacing:1px;">Plan Date</span><br><strong>${fmtDate(t.planDate)}</strong></div>
       <div style="color:var(--text3);">→</div>
       <div><span style="color:var(--text2);font-size:11px;text-transform:uppercase;letter-spacing:1px;">Actual</span><br><strong>${fmtDate(actual)}</strong></div>
       <div style="color:var(--text3);">→</div>
@@ -2673,7 +2675,7 @@ function saveAttendance() {
     if (name) spareParts.push({name, qty: qty||'1'});
   });
 
-  const gap = daysDiff(actual, t.nextDue);
+  const gap = daysDiff(actual, t.planDate);
   const log = {id:'att'+Date.now(), pmId:t.id, asset:t.asset, dept:t.dept, freq:t.freq,
     planDate:t.planDate, actualDate:actual, attendedBy:by,
     remarks:document.getElementById('attRemarks').value, gap,
