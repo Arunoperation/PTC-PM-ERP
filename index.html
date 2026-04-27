@@ -343,7 +343,14 @@ tr.overdue-row{background:#fff4f5;}
     <!-- DASHBOARD -->
     <div class="section active" id="sec-dashboard">
       <div class="section-header">Dashboard <span class="line"></span>
-        <button class="btn-outline" onclick="exportExcel()" style="font-size:12px;padding:5px 14px;">⬇ Export Excel</button>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <div style="display:flex;background:var(--surface2);border:1px solid var(--border);border-radius:6px;overflow:hidden;">
+            <button id="dashViewTotal"  onclick="setDashView('total')"  style="padding:5px 14px;font-size:12px;font-weight:600;border:none;cursor:pointer;background:var(--teal);color:#fff;transition:all .2s;">Total</button>
+            <button id="dashViewMonthly" onclick="setDashView('monthly')" style="padding:5px 14px;font-size:12px;font-weight:600;border:none;cursor:pointer;background:transparent;color:var(--text2);transition:all .2s;">This Month</button>
+            <button id="dashViewWeekly"  onclick="setDashView('weekly')"  style="padding:5px 14px;font-size:12px;font-weight:600;border:none;cursor:pointer;background:transparent;color:var(--text2);transition:all .2s;">This Week</button>
+          </div>
+          <button class="btn-outline" onclick="exportExcel()" style="font-size:12px;padding:5px 14px;">⬇ Export Excel</button>
+        </div>
       </div>
       <div class="stats-row" id="statsRow"></div>
 
@@ -365,9 +372,15 @@ tr.overdue-row{background:#fff4f5;}
           <div style="position:relative;height:230px;"><canvas id="chartCompliance" style="width:100%;height:100%;"></canvas></div>
         </div>
         <div class="card" style="padding:16px 20px;">
-          <div class="card-title" style="margin-bottom:12px;font-size:14px;"><span class="dot" style="background:var(--blue)"></span> Frequency Breakdown</div>
-          <div style="position:relative;height:230px;"><canvas id="chartFreq" style="width:100%;height:100%;"></canvas></div>
+          <div class="card-title" style="margin-bottom:12px;font-size:14px;"><span class="dot" style="background:var(--blue)"></span> <span id="monthlyChartTitle">Monthly PM Completion Trend</span></div>
+          <div style="position:relative;height:230px;"><canvas id="chartTrend" style="width:100%;height:100%;"></canvas></div>
         </div>
+      </div>
+
+      <!-- Performance Summary (Monthly/Weekly) -->
+      <div class="card" id="perfSummaryCard" style="margin-bottom:20px;padding:16px 20px;">
+        <div class="card-title" style="margin-bottom:14px;font-size:14px;"><span class="dot" style="background:var(--green)"></span> <span id="perfSummaryTitle">Performance Summary</span></div>
+        <div id="perfSummaryBody"></div>
       </div>
 
       <div class="card">
@@ -973,6 +986,7 @@ let firebaseMode = false;
 let selectedRole = null;
 let editingPMId = null;
 let attendingPMId = null;
+let attendingPlanDate = null; // effective plan date for current attend session
 let eqViewDept = '';
 
 let state = {
@@ -1071,6 +1085,7 @@ function setupListeners() {
 
   db.ref('pmTasks').on('value', snap => {
     state.pmTasks = snap.val() ? Object.values(snap.val()) : [];
+    migrateSundayDates();
     refreshVisible();
   });
 
@@ -1103,6 +1118,23 @@ function pushConfig() {
 
 function fbSet(path, data) { if (firebaseMode) db.ref(path).set(data); }
 function fbRemove(path)    { if (firebaseMode) db.ref(path).remove(); }
+
+// ── Data migration: snap any stored nextDue/planDate that landed on non-Sunday ──
+// This fixes tasks created by older code versions that didn't snap to Sunday correctly.
+function migrateSundayDates() {
+  let changed = false;
+  state.pmTasks.forEach(t => {
+    const fixedNextDue  = snapToSunday(t.nextDue);
+    const fixedPlanDate = snapToSunday(t.planDate);
+    if (fixedNextDue !== t.nextDue || fixedPlanDate !== t.planDate) {
+      t.nextDue  = fixedNextDue;
+      t.planDate = fixedPlanDate;
+      fbSet('pmTasks/' + t.id, t); // persist fix to Firebase
+      changed = true;
+    }
+  });
+  return changed;
+}
 
 function seedSampleTasks() {
   const d = n => { const dt = new Date(); dt.setDate(dt.getDate()+n); return localDateStr(dt); };
@@ -1244,6 +1276,7 @@ function initApp() {
   }
 
   if (!firebaseMode) { document.getElementById('fbDot').className='fb-dot'; document.getElementById('fbStatusTxt').textContent='Offline'; }
+  migrateSundayDates(); // fix any stored non-Sunday dates on every login
   populateFilters();
   showSection('dashboard');
   checkAlerts();
@@ -1427,44 +1460,77 @@ function refreshVisible() {
 // Track chart instances to destroy before redraw
 let _charts = {};
 
+// ── Dashboard view state ──
+let _dashView = 'total'; // 'total' | 'monthly' | 'weekly'
+function setDashView(v) {
+  _dashView = v;
+  ['total','monthly','weekly'].forEach(x => {
+    const btn = document.getElementById('dashView'+x.charAt(0).toUpperCase()+x.slice(1));
+    if (btn) { btn.style.background = x===v ? 'var(--teal)' : 'transparent'; btn.style.color = x===v ? '#fff' : 'var(--text2)'; }
+  });
+  renderDashboard();
+}
+
 function renderDashboard() {
   const td   = today();
   const role = state.currentUser?.role;
   const me   = state.currentUser?.name;
+  const view = _dashView;
 
-  // ── Role-based task filter (same logic as renderSchedule) ──
-  const tasks = state.pmTasks.filter(t => {
+  // ── Date window for monthly/weekly filter ──
+  const thisWeekStart = (() => { const d=new Date(td+'T00:00:00'); d.setDate(d.getDate()-d.getDay()); return localDateStr(d); })();
+  const thisWeekEnd   = (() => { const d=new Date(thisWeekStart+'T00:00:00'); d.setDate(d.getDate()+6); return localDateStr(d); })();
+  const thisMonthStr  = td.substring(0,7); // YYYY-MM
+
+  // ── Role-based task filter ──
+  const allTasks = state.pmTasks.filter(t => {
     if (role === 'Maintenance')      return t.assignedTo === me;
     if (role === 'Technician')       return t.assignedTo === me;
     if (role === 'Department Owner') return t.deptOwner  === me;
-    return true; // Admin and Manager see all
+    return true;
+  });
+
+  // ── Filter tasks by view window (based on planDate) ──
+  const tasks = allTasks.filter(t => {
+    if (view === 'weekly')  return t.planDate >= thisWeekStart && t.planDate <= thisWeekEnd;
+    if (view === 'monthly') return t.planDate && t.planDate.substring(0,7) === thisMonthStr;
+    return true;
+  });
+
+  // ── Attendance logs filtered by view window ──
+  const attLogs = state.attendance.filter(l => {
+    if (role === 'Maintenance' || role === 'Technician') if (l.attendedBy !== me) return false;
+    if (role === 'Department Owner') if (l.dept !== (state.users||[]).find(u=>u.name===me)?.dept) return false;
+    if (view === 'weekly')  return l.planDate >= thisWeekStart && l.planDate <= thisWeekEnd;
+    if (view === 'monthly') return l.planDate && l.planDate.substring(0,7) === thisMonthStr;
+    return true;
   });
 
   const total    = tasks.length;
-  const done     = tasks.filter(t=>t.status==='Done').length;
-  const overdue  = tasks.filter(t=>computeStatus(t)==='Overdue').length;
-  const soon     = tasks.filter(t=>{ const d=daysDiff(t.nextDue,td); return d>=0&&d<=3&&t.status!=='Done'; }).length;
-  const scheduled= tasks.filter(t=>computeStatus(t)==='Scheduled').length;
-  const pct      = total ? Math.round(done/total*100) : 0;
+  const done     = tasks.filter(t => t.status==='Done').length;
+  // For monthly/weekly: completed = attendance logs in that window
+  const completed = view === 'total' ? done : attLogs.length;
+  const overdue  = tasks.filter(t => computeStatus(t)==='Overdue').length;
+  const pending  = tasks.filter(t => { const d=daysDiff(t.nextDue,td); return d>=0&&d<=3&&t.status!=='Done'; }).length;
+  const scheduled= tasks.filter(t => computeStatus(t)==='Scheduled').length;
+  const pct      = total ? Math.round(completed/total*100) : 0;
 
-  // Role label for heading
-  const scopeLabel = (role==='Maintenance'||role==='Technician') ? ` — ${me}'s Tasks`
-                   : role==='Department Owner' ? ` — ${me}'s Department`
-                   : '';
+  const viewLabel = view==='weekly' ? ' — This Week' : view==='monthly' ? ' — This Month' : '';
+  const scopeLabel = (role==='Maintenance'||role==='Technician') ? ` (${me})` : role==='Department Owner' ? ` (${me})` : '';
 
   document.getElementById('statsRow').innerHTML = `
-    <div class="stat-card"><div class="stat-label">Total PM Tasks${scopeLabel}</div><div class="stat-value accent">${total}</div></div>
-    <div class="stat-card"><div class="stat-label">Completed</div><div class="stat-value green">${done}</div></div>
+    <div class="stat-card"><div class="stat-label">PM Plans${viewLabel}${scopeLabel}</div><div class="stat-value accent">${total}</div></div>
+    <div class="stat-card"><div class="stat-label">Attended${viewLabel}</div><div class="stat-value green">${completed}</div></div>
     <div class="stat-card"><div class="stat-label">Overdue</div><div class="stat-value red">${overdue}</div></div>
-    <div class="stat-card"><div class="stat-label">Due ≤ Lead Time</div><div class="stat-value yellow">${soon}</div></div>
+    <div class="stat-card"><div class="stat-label">Due Soon (≤3d)</div><div class="stat-value yellow">${pending}</div></div>
     <div class="stat-card"><div class="stat-label">Compliance %</div><div class="stat-value ${pct>=80?'green':'red'}">${pct}%</div></div>`;
 
   // ── Chart 1: Status Donut ──
   drawDonut('chartStatus', ['Done','Overdue','Pending','Scheduled'],
-    [done, overdue, soon, scheduled],
+    [view==='total'?done:completed, overdue, pending, scheduled],
     ['#28a745','#dc3545','#ffc107','#1d6fa5']);
 
-  // ── Chart 2: Tasks by Department bar ──
+  // ── Chart 2: Tasks by Department ──
   const depts = [...new Set(tasks.map(t=>t.dept))].filter(Boolean);
   const deptCounts = depts.map(d=>tasks.filter(t=>t.dept===d).length);
   drawBar('chartDept', depts, deptCounts, '#0d9488', 'Tasks');
@@ -1472,24 +1538,103 @@ function renderDashboard() {
   // ── Chart 3: Compliance % by Dept ──
   const compPct = depts.map(d=>{
     const dtasks = tasks.filter(t=>t.dept===d);
-    const ddone  = dtasks.filter(t=>t.status==='Done').length;
+    const ddone  = view==='total'
+      ? dtasks.filter(t=>t.status==='Done').length
+      : attLogs.filter(l=>l.dept===d).length;
     return dtasks.length ? Math.round(ddone/dtasks.length*100) : 0;
   });
   drawBar('chartCompliance', depts, compPct, '#f0a500', 'Compliance %', true);
 
-  // ── Chart 4: Frequency breakdown donut ──
-  const freqs = ['Daily','Weekly','Monthly','Quarterly','Annually'];
-  const freqCounts = freqs.map(f=>tasks.filter(t=>t.freq===f).length);
-  drawDonut('chartFreq', freqs, freqCounts, ['#0d9488','#1d6fa5','#f0a500','#e05a2b','#28a745']);
+  // ── Chart 4: Trend — Monthly completion bar OR weekly days ──
+  if (view === 'weekly') {
+    // Show day-by-day attendance count for this week
+    const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const dayCounts = dayNames.map((_,i) => {
+      const d = new Date(thisWeekStart+'T00:00:00'); d.setDate(d.getDate()+i);
+      const ds = localDateStr(d);
+      return attLogs.filter(l=>l.actualDate===ds).length;
+    });
+    document.getElementById('monthlyChartTitle').textContent = 'This Week — Daily Attendance';
+    drawBar('chartTrend', dayNames, dayCounts, '#1d6fa5', 'Attended');
+  } else {
+    // Show last 6 months completion trend
+    const months = [];
+    for (let i=5; i>=0; i--) {
+      const d = new Date(td+'T00:00:00'); d.setDate(1); d.setMonth(d.getMonth()-i);
+      months.push(localDateStr(d).substring(0,7));
+    }
+    const mLabels = months.map(m => { const [y,mo]=m.split('-'); return new Date(y,parseInt(mo)-1,1).toLocaleString('default',{month:'short'})+' '+y.slice(2); });
+    const mCounts = months.map(m => state.attendance.filter(l => {
+      if (role==='Maintenance'||role==='Technician') if(l.attendedBy!==me) return false;
+      return l.planDate && l.planDate.substring(0,7)===m;
+    }).length);
+    document.getElementById('monthlyChartTitle').textContent = 'Monthly PM Completion Trend (6 Months)';
+    drawBar('chartTrend', mLabels, mCounts, '#1d6fa5', 'Completed');
+  }
+
+  // ── Performance Summary Card ──
+  const perfTitle = view==='weekly' ? 'This Week Performance Summary'
+                  : view==='monthly' ? 'This Month Performance Summary'
+                  : 'Overall Performance Summary';
+  document.getElementById('perfSummaryTitle').textContent = perfTitle;
+
+  const onTime = attLogs.filter(l=>l.gap===0).length;
+  const early  = attLogs.filter(l=>l.gap<0).length;
+  const late   = attLogs.filter(l=>l.gap>0).length;
+  const attTotal = attLogs.length;
+
+  // Per-user breakdown (Admin/Manager only)
+  let userBreakdown = '';
+  if (role==='Admin'||role==='Manager') {
+    const users = [...new Set(attLogs.map(l=>l.attendedBy))].filter(Boolean);
+    userBreakdown = users.map(u => {
+      const ul = attLogs.filter(l=>l.attendedBy===u);
+      const uOT = ul.filter(l=>l.gap===0).length, uLate=ul.filter(l=>l.gap>0).length;
+      const uPct = ul.length ? Math.round(uOT/ul.length*100) : 0;
+      return `<tr>
+        <td><strong>${u}</strong></td>
+        <td style="text-align:center;">${ul.length}</td>
+        <td style="text-align:center;"><span class="gap-pill ontime">${ul.filter(l=>l.gap===0).length}</span></td>
+        <td style="text-align:center;"><span class="gap-pill early">${ul.filter(l=>l.gap<0).length}</span></td>
+        <td style="text-align:center;"><span class="gap-pill late">${ul.filter(l=>l.gap>0).length}</span></td>
+        <td style="text-align:center;"><strong style="color:${uPct>=80?'var(--green)':'var(--red)'};">${uPct}%</strong></td>
+      </tr>`;
+    }).join('');
+  }
+
+  document.getElementById('perfSummaryBody').innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:${userBreakdown?'16px':'0'};">
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:12px 16px;text-align:center;">
+        <div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Total Attended</div>
+        <div style="font-size:26px;font-weight:700;color:var(--blue);">${attTotal}</div>
+      </div>
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:12px 16px;text-align:center;">
+        <div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">On Time</div>
+        <div style="font-size:26px;font-weight:700;color:var(--green);">${onTime}</div>
+      </div>
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:12px 16px;text-align:center;">
+        <div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Early</div>
+        <div style="font-size:26px;font-weight:700;color:var(--teal);">${early}</div>
+      </div>
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:12px 16px;text-align:center;">
+        <div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Late</div>
+        <div style="font-size:26px;font-weight:700;color:var(--red);">${late}</div>
+      </div>
+    </div>
+    ${userBreakdown ? `
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Technician</th><th style="text-align:center;">Attended</th><th style="text-align:center;">On Time</th><th style="text-align:center;">Early</th><th style="text-align:center;">Late</th><th style="text-align:center;">On-Time %</th></tr></thead>
+      <tbody>${userBreakdown}</tbody>
+    </table></div>` : ''}`;
 
   // ── Upcoming table ──
-  const up = tasks.filter(t=>{ const d=daysDiff(t.nextDue,td); return d>=0&&d<=7&&t.status!=='Done'; }).sort((a,b)=>a.nextDue.localeCompare(b.nextDue));
+  const up = allTasks.filter(t=>{ const d=daysDiff(t.nextDue,td); return d>=0&&d<=7&&t.status!=='Done'; }).sort((a,b)=>a.nextDue.localeCompare(b.nextDue));
   document.getElementById('dashUpcoming').innerHTML = up.length
     ? up.map(t=>`<tr class="${daysDiff(t.nextDue,td)<=3?'due-soon':''}"><td><strong>${t.asset}</strong></td><td>${t.dept}</td><td>${freqBadge(t.freq)}</td><td>${fmtDate(t.nextDue)}</td><td>${t.assignedTo||'—'}</td><td>${statusBadge(computeStatus(t))}</td></tr>`).join('')
     : '<tr><td colspan="6" class="empty-state">No tasks due in next 7 days</td></tr>';
 
   // ── Overdue table ──
-  const ov = tasks.filter(t=>computeStatus(t)==='Overdue');
+  const ov = allTasks.filter(t=>computeStatus(t)==='Overdue');
   document.getElementById('dashOverdue').innerHTML = ov.length
     ? ov.map(t=>`<tr class="overdue-row"><td><strong>${t.asset}</strong></td><td>${t.dept}</td><td>${freqBadge(t.freq)}</td><td>${fmtDate(t.nextDue)}</td><td><span style="color:var(--red);font-weight:700;">${Math.abs(daysDiff(t.nextDue,td))}d</span></td><td>${statusBadge('Overdue')}</td></tr>`).join('')
     : '<tr><td colspan="6" class="empty-state" style="color:var(--green)">✓ No overdue tasks</td></tr>';
@@ -1954,9 +2099,12 @@ function renderSchedule() {
     // Per-task permissions
     const isOwn     = t.assignedTo === state.currentUser?.name;
     const isDeptOwner = role === 'Department Owner';
-    const canEdit   = canEditAny || (isOwn && !isDeptOwner);   // Admin, Sup, or assigned non-DeptOwner
-    const canDel    = isAdmin;                                  // Admin only
-    const canAttend = s !== 'Done' && isOwn && !isDeptOwner;   // Only assigned Technician/Sup
+    const canEdit   = isAdmin || isSup;                          // Admin and Maintenance only
+    const canDel    = isAdmin || isSup;                          // Admin and Maintenance only
+    // canAttend: assigned user can attend if not Done, OR if Done but nextDue is in current month (next cycle due this month)
+    const currentMonth = td.substring(0, 7);
+    const nextDueThisMonth = t.nextDue && t.nextDue.substring(0, 7) === currentMonth;
+    const canAttend = isOwn && !isDeptOwner && (s !== 'Done' || nextDueThisMonth);
     const canAssign = isSup || isManager;                      // Maintenance and Manager can assign technicians
     // Maintenance (Supervisor) can close overdue tasks with a reason
     const canCloseOverdue = s === 'Overdue' && isSup;
@@ -1972,7 +2120,7 @@ function renderSchedule() {
         ${canEdit   ? `<button class="btn-sm" onclick="openPMModal('${t.id}')" style="margin-left:4px;">Edit</button>` : ''}
         ${canAttend ? `<button class="btn-sm green-btn" onclick="openAttend('${t.id}')" style="margin-left:4px;">✓ Attend</button>` : ''}
         ${canCloseOverdue ? `<button class="btn-sm" onclick="openOverdueModal('${t.id}')" style="margin-left:4px;background:rgba(124,58,237,.1);color:#7c3aed;border-color:#a78bfa;" title="Close overdue with reason — won't affect your performance">⚠ Close Overdue</button>` : ''}
-        ${canDel    ? `<button class="btn-sm danger" onclick="deletePM('${t.id}')" style="margin-left:4px;">Del</button>` : ''}
+        ${canDel    ? `<button class="btn-sm danger" onclick="deletePM('${t.id}')" style="margin-left:4px;">🗑 Delete</button>` : ''}
       </td>
     </tr>`;
   }).join('');
@@ -2035,14 +2183,31 @@ function renderAlerts() {
 function renderAttendance() {
   const dept = document.getElementById('filterAttDept').value;
   const q    = document.getElementById('filterAttSearch').value.toLowerCase();
-  const logs = state.attendance.filter(l => (!dept||l.dept===dept) && (!q||l.asset.toLowerCase().includes(q)));
+  const role = state.currentUser?.role;
+  const me   = state.currentUser?.name;
+  const isAdminOrManager = role === 'Admin' || role === 'Manager';
+
+  // Non-admin/manager users see ONLY their own attendance logs
+  const logs = state.attendance.filter(l => {
+    if (!isAdminOrManager && l.attendedBy !== me) return false;
+    if (dept && l.dept !== dept) return false;
+    if (q && !l.asset.toLowerCase().includes(q)) return false;
+    return true;
+  });
+
   const tb   = document.getElementById('attTbody');
-  const isAdmin = state.currentUser?.role === 'Admin';
+  const isAdmin = role === 'Admin';
   if (!logs.length) { tb.innerHTML='<tr><td colspan="10" class="empty-state">No attendance records yet</td></tr>'; return; }
-  tb.innerHTML = logs.slice().reverse().map(l => `<tr>
+  tb.innerHTML = logs.slice().reverse().map(l => {
+    // Status label with colour
+    const gc = getGapClass(l.gap);
+    const statusLabel = l.excusedOverdue
+      ? `<span class="badge-status excused" style="font-size:11px;">Excused</span>`
+      : `<span class="gap-pill ${gc}">${gapLabel(l.gap)}</span>`;
+    return `<tr>
     <td><strong>${l.asset}</strong></td><td>${l.dept}</td><td>${freqBadge(l.freq)}</td>
     <td>${fmtDate(l.planDate)}</td><td>${fmtDate(l.actualDate)}</td>
-    <td><span class="gap-pill ${getGapClass(l.gap)}">${gapLabel(l.gap)}</span></td>
+    <td>${statusLabel}</td>
     <td>${l.attendedBy}</td><td style="color:var(--text2);font-size:12px;">${l.remarks||'—'}</td>
     <td style="font-size:11px;color:var(--teal);">${l.spareParts&&l.spareParts.length ? l.spareParts.map(s=>`<div style="white-space:nowrap;">📦 ${s.name} <strong>×${s.qty}</strong></div>`).join('') : '<span style="color:var(--text3);">—</span>'}</td>
     <td style="text-align:center;">
@@ -2055,7 +2220,8 @@ function renderAttendance() {
       <button class="btn-sm" onclick="openMailModal('${l.id}')" title="Send completion mail">✉ Mail</button>
       ${isAdmin ? `<button class="btn-sm danger" onclick="deleteAttendance('${l.id}')" style="margin-left:4px;" title="Delete this record">🗑 Del</button>` : ''}
     </td>
-  </tr>`).join('');
+  </tr>`;
+  }).join('');
 }
 
 function deleteAttendance(id) {
@@ -2518,11 +2684,16 @@ function viewPM(id) {
 function openAttend(id) {
   attendingPMId = id;
   const t = state.pmTasks.find(x=>x.id===id);
+
+  // Always use the current active cycle's plan date:
+  // if planDate < nextDue (rolled forward after attendance), nextDue IS the current plan
+  const effectivePlanDate = (t.planDate < t.nextDue) ? t.nextDue : t.planDate;
+  attendingPlanDate = effectivePlanDate;
+
   document.getElementById('attAssetLabel').textContent = t.asset + ' — ' + t.dept;
-  // Show the actual planned Sunday (planDate) — e.g. 19 Apr, not the nextDue which is the following period
-  document.getElementById('attPlanLabel').textContent  = fmtDate(t.planDate) + ' (Sunday)';
-  // Default actual date to the plan Sunday so gap starts at On-Time; user can change if done on a different day
-  document.getElementById('attActualDate').value = t.planDate;
+  document.getElementById('attPlanLabel').textContent  = fmtDate(effectivePlanDate) + ' (Sunday)';
+  // Default actual date to the plan Sunday → gap starts at On-Time
+  document.getElementById('attActualDate').value = effectivePlanDate;
   document.getElementById('attBy').value = state.currentUser.name;
   document.getElementById('attRemarks').value = '';
   // Reset spare parts
@@ -2538,6 +2709,7 @@ function openAttend(id) {
 function closeAttendModal() {
   document.getElementById('attendModal').classList.remove('open');
   attendingPMId = null;
+  attendingPlanDate = null;
   clearEvidence();
   document.getElementById('sparePartsContainer').innerHTML = '';
 }
@@ -2649,10 +2821,11 @@ function updateGapPreview() {
   if (!attendingPMId) return;
   const t = state.pmTasks.find(x=>x.id===attendingPMId); if (!t) return;
   const actual = document.getElementById('attActualDate').value; if (!actual) return;
-  const gap = daysDiff(actual, t.planDate);
+  const planRef = attendingPlanDate || t.planDate;
+  const gap = daysDiff(actual, planRef);
   document.getElementById('gapPreview').innerHTML = `
     <div style="background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:10px 14px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
-      <div><span style="color:var(--text2);font-size:11px;text-transform:uppercase;letter-spacing:1px;">Plan Date</span><br><strong>${fmtDate(t.planDate)}</strong></div>
+      <div><span style="color:var(--text2);font-size:11px;text-transform:uppercase;letter-spacing:1px;">Plan Date</span><br><strong>${fmtDate(planRef)}</strong></div>
       <div style="color:var(--text3);">→</div>
       <div><span style="color:var(--text2);font-size:11px;text-transform:uppercase;letter-spacing:1px;">Actual</span><br><strong>${fmtDate(actual)}</strong></div>
       <div style="color:var(--text3);">→</div>
@@ -2675,9 +2848,10 @@ function saveAttendance() {
     if (name) spareParts.push({name, qty: qty||'1'});
   });
 
-  const gap = daysDiff(actual, t.planDate);
+  const planRef = attendingPlanDate || t.planDate;
+  const gap = daysDiff(actual, planRef);
   const log = {id:'att'+Date.now(), pmId:t.id, asset:t.asset, dept:t.dept, freq:t.freq,
-    planDate:t.planDate, actualDate:actual, attendedBy:by,
+    planDate:planRef, actualDate:actual, attendedBy:by,
     remarks:document.getElementById('attRemarks').value, gap,
     spareParts: spareParts.length ? spareParts : null,
     evidencePhoto: window._evidenceBase64 || null};
@@ -2687,14 +2861,14 @@ function saveAttendance() {
 
   // Determine next due date based on user's choice
   const nextDueChoice = document.querySelector('input[name="nextDueChoice"]:checked')?.value || 'advance';
-  t.status  = 'Done';
   if (nextDueChoice === 'same') {
-    // Keep the same planned date (task re-opens at same Sunday slot)
+    // Keep same planned date — reopen task as Pending
     t.status  = 'Pending';
-    // nextDue stays unchanged — just reopen the task
   } else {
-    // Advance to next occurrence — always calculated from the PLAN date (t.nextDue), not actual date
-    t.nextDue = nextDueAfter(t.nextDue, t.freq);
+    // Advance to next occurrence
+    t.nextDue  = nextDueAfter(t.nextDue, t.freq);
+    t.planDate = t.nextDue;   // new cycle's plan date = new nextDue Sunday
+    t.status   = 'Pending';   // reset so canAttend works for next cycle without re-login
   }
   fbSet('pmTasks/'+t.id, t);
 
