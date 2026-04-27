@@ -2144,12 +2144,22 @@ function renderSchedule() {
     if (areaF && (t.area||'') !== areaF) return false;
     if (freq  && t.freq !== freq) return false;
     if (q     && !t.asset.toLowerCase().includes(q)) return false;
-    // Hide Done tasks by default — attended history lives in Attendance tab
-    // Only show Done if user explicitly selects "Done" from status filter
+    // Hide Done tasks only if a newer active cycle exists for this asset
+    // This prevents hiding Done tasks when no next-cycle was created yet
     if (st) {
       if (computeStatus(t) !== st) return false;
     } else {
-      if (t.status === 'Done') return false;
+      if (t.status === 'Done') {
+        const hasNewerCycle = state.pmTasks.some(x =>
+          x.id !== t.id &&
+          x.asset === t.asset &&
+          x.dept  === t.dept &&
+          x.status !== 'Done' &&
+          x.planDate >= t.planDate
+        );
+        if (hasNewerCycle) return false; // hide — newer cycle exists
+        // else show it — no next cycle yet, keep visible so user knows
+      }
     }
 
     // Date filter — applied to nextDue date
