@@ -33,7 +33,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--font-body);font-si
 
 /* ── LOGIN ── */
 /* ── LOGIN ── */
-#loginScreen{min-height:100vh;display:none;align-items:center;justify-content:center;background:linear-gradient(145deg,#0d1b2a 0%,#1a2e48 45%,#0f2236 100%);}
+#loginScreen{min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(145deg,#0d1b2a 0%,#1a2e48 45%,#0f2236 100%);}
 #loginScreen::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse at 30% 40%,rgba(26,95,160,.18) 0%,transparent 60%),radial-gradient(ellipse at 75% 70%,rgba(10,124,112,.12) 0%,transparent 55%);pointer-events:none;}
 .login-box{background:rgba(20,36,56,.92);border:1px solid rgba(255,255,255,.1);border-top:3px solid var(--accent);border-radius:var(--radius);padding:40px 48px;width:380px;box-shadow:0 8px 40px rgba(0,0,0,.5),0 0 0 1px rgba(255,255,255,.04);backdrop-filter:blur(8px);}
 .login-logo{font-family:var(--font-head);font-size:28px;font-weight:800;letter-spacing:2px;color:var(--accent);text-align:center;margin-bottom:4px;}
@@ -158,6 +158,7 @@ tr.due-soon td:first-child{border-left:3px solid #c49a00;}
 tr.overdue-row td:first-child{border-left:3px solid #b02a37;}
 tr.due-soon{background:#fffbee;}
 tr.overdue-row{background:#fff4f5;}
+tr.done-row{background:#f0faf4;opacity:0.8;}
 
 .section-header{font-family:var(--font-head);font-size:22px;font-weight:700;letter-spacing:2px;color:var(--text);margin-bottom:20px;display:flex;align-items:center;gap:10px;}
 .section-header .line{flex:1;height:1px;background:var(--border);}
@@ -328,6 +329,8 @@ tr.overdue-row{background:#fff4f5;}
       <button class="nav-tab" id="tab-perf" onclick="showSection('performance')">👤 Performance</button>
       <button class="nav-tab" id="tab-confirm" onclick="showSection('confirmations')" style="display:none">✔ Confirmations <span class="badge" id="confirmBadge" style="display:none">0</span></button>
       <button class="nav-tab" id="tab-spares" onclick="showSection('spares')">📦 Spare Consumption</button>
+      <button class="nav-tab" id="tab-eqregister" onclick="showSection('eqregister')">🔧 Eq. Register</button>
+      <button class="nav-tab" id="tab-pmplans" onclick="showSection('pmplans')">📑 PM Plans</button>
     </div>
     <div class="topbar-user">
       <div class="fb-status"><div class="fb-dot" id="fbDot"></div><span id="fbStatusTxt" style="font-size:11px;color:var(--text3);">—</span></div>
@@ -402,7 +405,9 @@ tr.overdue-row{background:#fff4f5;}
     <!-- PM SCHEDULE -->
     <div class="section" id="sec-schedule">
       <div class="section-header">PM Schedule <span class="line"></span></div>
-      <div class="toolbar">
+
+      <!-- Toolbar row 1: Filters -->
+      <div class="toolbar" style="flex-wrap:wrap;gap:8px;">
         <button class="btn-action" id="btnAddPM" onclick="openPMModal()" style="display:none">+ Add PM Task</button>
         <select class="filter-sel" id="filterDept" onchange="onFilterDeptChange();renderSchedule()"><option value="">All Departments</option></select>
         <select class="filter-sel" id="filterArea" onchange="renderSchedule()"><option value="">All Areas</option></select>
@@ -413,37 +418,42 @@ tr.overdue-row{background:#fff4f5;}
         <select class="filter-sel" id="filterStatus" onchange="renderSchedule()">
           <option value="">All Statuses</option><option>Scheduled</option><option>Pending</option><option>Done</option><option>Overdue</option>
         </select>
-        <input class="filter-inp" type="text" id="filterSearch" placeholder="Search asset…" oninput="renderSchedule()">
+        <input class="filter-inp" type="text" id="filterSearch" placeholder="Search asset…" oninput="renderSchedule()" style="min-width:160px;">
       </div>
-      <!-- Date filter row -->
-      <div class="toolbar" style="margin-top:6px;background:rgba(26,95,160,0.05);border:1px solid var(--border);border-radius:6px;padding:8px 12px;">
-        <span style="font-size:11px;color:var(--text2);font-weight:600;text-transform:uppercase;letter-spacing:1px;white-space:nowrap;">📅 Date Filter:</span>
-        <select class="filter-sel" id="filterDateMode" onchange="toggleDateFilter()" style="width:150px;">
-          <option value="">No Date Filter</option>
-          <option value="single">Specific Date</option>
-          <option value="range">Date Range</option>
-          <option value="month">Month</option>
-          <option value="today">Today</option>
-          <option value="week">This Week</option>
-          <option value="overdue">Overdue Only</option>
-        </select>
+
+      <!-- Toolbar row 2: Date/Month toggle -->
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;background:rgba(26,95,160,0.05);border:1px solid var(--border);border-radius:6px;padding:8px 14px;">
+        <span style="font-size:11px;color:var(--text2);font-weight:700;text-transform:uppercase;letter-spacing:1px;white-space:nowrap;">📅 Filter by:</span>
+        <!-- Toggle buttons -->
+        <div style="display:flex;background:var(--surface2);border:1px solid var(--border);border-radius:20px;overflow:hidden;flex-shrink:0;">
+          <button id="dtgAll"     onclick="setDateToggle('')"       style="padding:5px 14px;font-size:12px;font-weight:600;border:none;cursor:pointer;background:var(--blue);color:#fff;transition:all .2s;">All</button>
+          <button id="dtgToday"   onclick="setDateToggle('today')"  style="padding:5px 14px;font-size:12px;font-weight:600;border:none;cursor:pointer;background:transparent;color:var(--text2);transition:all .2s;">Today</button>
+          <button id="dtgWeek"    onclick="setDateToggle('week')"   style="padding:5px 14px;font-size:12px;font-weight:600;border:none;cursor:pointer;background:transparent;color:var(--text2);transition:all .2s;">This Week</button>
+          <button id="dtgMonth"   onclick="setDateToggle('month')"  style="padding:5px 14px;font-size:12px;font-weight:600;border:none;cursor:pointer;background:transparent;color:var(--text2);transition:all .2s;">Month</button>
+          <button id="dtgDate"    onclick="setDateToggle('single')" style="padding:5px 14px;font-size:12px;font-weight:600;border:none;cursor:pointer;background:transparent;color:var(--text2);transition:all .2s;">Date</button>
+          <button id="dtgRange"   onclick="setDateToggle('range')"  style="padding:5px 14px;font-size:12px;font-weight:600;border:none;cursor:pointer;background:transparent;color:var(--text2);transition:all .2s;">Range</button>
+          <button id="dtgOverdue" onclick="setDateToggle('overdue')" style="padding:5px 14px;font-size:12px;font-weight:600;border:none;cursor:pointer;background:transparent;color:var(--text2);transition:all .2s;">Overdue</button>
+        </div>
+        <!-- Hidden inputs (kept for renderSchedule compatibility) -->
+        <input type="hidden" id="filterDateMode" value="">
+        <!-- Picker panels -->
         <span id="dateSingleWrap" style="display:none;align-items:center;gap:6px;">
           <label style="font-size:11px;color:var(--text2);">Date:</label>
           <input class="filter-inp" type="date" id="filterDateSingle" onchange="renderSchedule()" style="width:150px;">
         </span>
         <span id="dateRangeWrap" style="display:none;align-items:center;gap:6px;">
           <label style="font-size:11px;color:var(--text2);">From:</label>
-          <input class="filter-inp" type="date" id="filterDateFrom" onchange="renderSchedule()" style="width:145px;">
+          <input class="filter-inp" type="date" id="filterDateFrom" onchange="renderSchedule()" style="width:140px;">
           <label style="font-size:11px;color:var(--text2);">To:</label>
-          <input class="filter-inp" type="date" id="filterDateTo" onchange="renderSchedule()" style="width:145px;">
+          <input class="filter-inp" type="date" id="filterDateTo" onchange="renderSchedule()" style="width:140px;">
         </span>
         <span id="dateMonthWrap" style="display:none;align-items:center;gap:6px;">
           <label style="font-size:11px;color:var(--text2);">Month:</label>
-          <input class="filter-inp" type="month" id="filterDateMonth" onchange="renderSchedule()" style="width:145px;">
+          <input class="filter-inp" type="month" id="filterDateMonth" onchange="renderSchedule()" style="width:150px;">
         </span>
-        <button class="btn-outline" onclick="clearDateFilter()" style="font-size:11px;padding:4px 10px;margin-left:4px;">✕ Clear</button>
         <span id="scheduleCount" style="font-size:11px;color:var(--text3);margin-left:auto;white-space:nowrap;"></span>
       </div>
+
       <div class="card" style="padding:0;margin-top:10px;"><div class="tbl-wrap"><table>
         <thead><tr><th>Asset</th><th>Dept</th><th>Area</th><th>Freq</th><th>Plan Date</th><th>Next Due</th><th>Assigned To</th><th>Dept. Owner</th><th>Status</th><th>Actions</th></tr></thead>
         <tbody id="scheduleTbody"></tbody>
@@ -595,11 +605,72 @@ tr.overdue-row{background:#fff4f5;}
       </div>
     </div>
 
+    <!-- EQUIPMENT REGISTER -->
+    <div class="section" id="sec-eqregister">
+      <div class="section-header">🔧 Equipment Register <span class="line"></span></div>
+      <div class="info-box">📋 All equipment from the masterlist — check which assets have a PM plan and their last attendance.</div>
+      <div class="toolbar" style="flex-wrap:wrap;gap:8px;margin-bottom:14px;">
+        <select class="filter-sel" id="eqregDeptFilter" onchange="renderEqRegister()"><option value="">All Departments</option></select>
+        <select class="filter-sel" id="eqregPMFilter" onchange="renderEqRegister()">
+          <option value="">All Equipment</option><option value="yes">✅ Has PM Plan</option><option value="no">❌ No PM Plan</option>
+        </select>
+        <input class="filter-inp" type="text" id="eqregSearch" placeholder="Search equipment…" oninput="renderEqRegister()" style="min-width:180px;">
+        <span id="eqregCount" style="font-size:11px;color:var(--text3);margin-left:auto;"></span>
+      </div>
+      <div class="card" style="padding:0;"><div class="tbl-wrap"><table>
+        <thead><tr><th style="width:36px;">#</th><th>Equipment</th><th>Tag</th><th>Department</th>
+          <th style="text-align:center;">PM Plan</th><th>Frequency</th><th>Last PM Done</th>
+          <th>Next Due</th><th>Assigned To</th><th>Status</th><th>Action</th></tr></thead>
+        <tbody id="eqregTbody"></tbody>
+      </table></div></div>
+    </div>
+
+    <!-- PM PLANS REGISTER -->
+    <div class="section" id="sec-pmplans">
+      <div class="section-header">📑 PM Plans Register <span class="line"></span></div>
+      <div class="info-box">📋 Complete register of all PM plans — including Done (completed) tasks. Active plans at top.</div>
+      <div class="toolbar" style="flex-wrap:wrap;gap:8px;margin-bottom:14px;">
+        <select class="filter-sel" id="plansDepFilter" onchange="renderPMPlans()"><option value="">All Departments</option></select>
+        <select class="filter-sel" id="plansFreqFilter" onchange="renderPMPlans()">
+          <option value="">All Frequencies</option>
+          <option>Daily</option><option>Weekly</option><option>15 Days (1st &amp; 3rd Week)</option><option>15 Days (2nd &amp; 4th Week)</option>
+          <option>Monthly</option><option>Quarterly</option><option>Annually</option>
+        </select>
+        <select class="filter-sel" id="plansStatusFilter" onchange="renderPMPlans()">
+          <option value="">All Statuses</option><option>Scheduled</option><option>Pending</option><option>Overdue</option><option>Done</option>
+        </select>
+        <input class="filter-inp" type="text" id="plansSearch" placeholder="Search asset…" oninput="renderPMPlans()" style="min-width:180px;">
+        <span id="plansCount" style="font-size:11px;color:var(--text3);margin-left:auto;"></span>
+      </div>
+      <div class="card" style="padding:0;"><div class="tbl-wrap"><table>
+        <thead><tr><th style="width:36px;">#</th><th>Asset</th><th>Department</th><th>Area</th>
+          <th>Frequency</th><th>Plan Date</th><th>Next Due</th>
+          <th>Assigned To</th><th>Dept. Owner</th><th>Priority</th><th>Status</th></tr></thead>
+        <tbody id="plansTbody"></tbody>
+      </table></div></div>
+    </div>
+
     <!-- ADMIN -->
     <div class="section" id="sec-admin">
       <div class="section-header">Admin Panel <span class="line"></span></div>
 
-      <!-- EQUIPMENT MASTERLIST -->
+      <!-- RECOVERY TOOLS -->
+      <div class="card" style="border-top-color:var(--yellow);margin-bottom:16px;">
+        <div class="card-title"><span class="dot" style="background:var(--yellow)"></span> 🔧 Schedule Recovery Tools</div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.7;">
+          Use these tools if PM Schedule is missing auto-generated tasks after attendance was logged.
+          <strong style="color:var(--yellow);">Run once after deploying the updated file.</strong>
+        </div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+          <button class="btn-action" onclick="regenerateMissingTasks()" style="background:var(--teal);">
+            ♻ Regenerate Missing Next-Cycle Tasks
+          </button>
+          <button class="btn-outline" onclick="fixDoneTasksInSchedule()">
+            🧹 Hide Done Tasks from Schedule
+          </button>
+          <span id="recoveryMsg" style="font-size:12px;color:var(--green);min-height:18px;"></span>
+        </div>
+      </div>
       <div class="card">
         <div class="card-title"><span class="dot" style="background:var(--teal)"></span> Equipment Masterlist — Department-wise</div>
         <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:flex-end;">
@@ -616,6 +687,15 @@ tr.overdue-row{background:#fff4f5;}
           <div>
             <label class="form-label">Tag / ID</label>
             <input class="form-input" id="eqTagInput" placeholder="C-101" style="width:130px;">
+          </div>
+          <div>
+            <label class="form-label">PM Frequency <span style="color:var(--text3);font-size:10px;">(auto-plan on add)</span></label>
+            <select class="form-select" id="eqFreqSel" style="width:200px;">
+              <option value="">-- No Auto-Plan --</option>
+              <option>Daily</option><option>Weekly</option>
+              <option>15 Days (1st &amp; 3rd Week)</option><option>15 Days (2nd &amp; 4th Week)</option>
+              <option>Monthly</option><option>Quarterly</option><option>Annually</option>
+            </select>
           </div>
           <button class="btn-action" style="align-self:flex-end;" onclick="addEquipment()">+ Add Equipment</button>
         </div>
@@ -1020,6 +1100,7 @@ let state = {
 // FIREBASE — Auto-initialised (credentials hardcoded)
 // =========================================================
 function initFirebase() {
+  document.getElementById('loginScreen').style.display = 'flex';
   try {
     const firebaseConfig = {
       apiKey: "AIzaSyCIjwa78jhhX9V4sJCVQAAxrxa2IlzYZD0",
@@ -1033,13 +1114,11 @@ function initFirebase() {
     const app = firebase.initializeApp(firebaseConfig);
     db = firebase.database(app);
     firebaseMode = true;
-
     db.ref('.info/connected').on('value', snap => {
       const ok = snap.val();
       document.getElementById('fbDot').className = 'fb-dot' + (ok ? ' connected' : '');
       document.getElementById('fbStatusTxt').textContent = ok ? 'Live' : 'Reconnecting…';
     });
-
     setupListeners();
   } catch(e) {
     console.error('Firebase init error:', e);
@@ -1079,19 +1158,21 @@ function setupListeners() {
     } else {
       pushConfig();
     }
-    populateFilters();
-    if (document.getElementById('sec-admin').classList.contains('active')) renderAdmin();
+    if (state.currentUser) {
+      populateFilters();
+      if (document.getElementById('sec-admin').classList.contains('active')) renderAdmin();
+    }
   });
 
   db.ref('pmTasks').on('value', snap => {
     state.pmTasks = snap.val() ? Object.values(snap.val()) : [];
     migrateSundayDates();
-    refreshVisible();
+    if (state.currentUser) refreshVisible();
   });
 
   db.ref('attendance').on('value', snap => {
     state.attendance = snap.val() ? Object.values(snap.val()) : [];
-    if (document.getElementById('sec-attendance').classList.contains('active')) renderAttendance();
+    if (state.currentUser && document.getElementById('sec-attendance').classList.contains('active')) renderAttendance();
   });
 
   db.ref('pendingConfirm').on('value', snap => {
@@ -1444,7 +1525,7 @@ function showSection(name) {
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
   const tab = document.getElementById('tab-'+name);
   if (tab) tab.classList.add('active');
-  const fns = {dashboard:renderDashboard,schedule:renderSchedule,alerts:renderAlerts,attendance:renderAttendance,admin:renderAdmin,performance:renderPerformance,confirmations:renderConfirmations,spares:renderSpares};
+  const fns = {dashboard:renderDashboard,schedule:renderSchedule,alerts:renderAlerts,attendance:renderAttendance,admin:renderAdmin,performance:renderPerformance,confirmations:renderConfirmations,spares:renderSpares,eqregister:renderEqRegister,pmplans:renderPMPlans};
   if (fns[name]) fns[name]();
 }
 
@@ -1994,21 +2075,34 @@ function exportPerfExcel(){
 // =========================================================
 // PM SCHEDULE
 // =========================================================
-function toggleDateFilter() {
-  const mode = document.getElementById('filterDateMode').value;
+function setDateToggle(mode) {
+  // Update hidden input
+  document.getElementById('filterDateMode').value = mode;
+  // Show/hide pickers
   document.getElementById('dateSingleWrap').style.display = mode==='single' ? 'flex' : 'none';
   document.getElementById('dateRangeWrap').style.display  = mode==='range'  ? 'flex' : 'none';
   document.getElementById('dateMonthWrap').style.display  = mode==='month'  ? 'flex' : 'none';
+  // Highlight active toggle button
+  const map = {'':{btn:'dtgAll'},today:{btn:'dtgToday'},week:{btn:'dtgWeek'},
+               month:{btn:'dtgMonth'},single:{btn:'dtgDate'},range:{btn:'dtgRange'},overdue:{btn:'dtgOverdue'}};
+  ['dtgAll','dtgToday','dtgWeek','dtgMonth','dtgDate','dtgRange','dtgOverdue'].forEach(id => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    const active = map[mode]?.btn === id;
+    btn.style.background = active ? 'var(--blue)' : 'transparent';
+    btn.style.color       = active ? '#fff'        : 'var(--text2)';
+  });
   renderSchedule();
 }
 
+function toggleDateFilter() { setDateToggle(document.getElementById('filterDateMode').value||''); }
+
 function clearDateFilter() {
-  document.getElementById('filterDateMode').value  = '';
   document.getElementById('filterDateSingle').value = '';
   document.getElementById('filterDateFrom').value   = '';
   document.getElementById('filterDateTo').value     = '';
   document.getElementById('filterDateMonth').value  = '';
-  toggleDateFilter();
+  setDateToggle('');
 }
 
 function renderSchedule() {
@@ -2049,8 +2143,14 @@ function renderSchedule() {
     if (dept  && t.dept !== dept) return false;
     if (areaF && (t.area||'') !== areaF) return false;
     if (freq  && t.freq !== freq) return false;
-    if (st    && computeStatus(t) !== st) return false;
     if (q     && !t.asset.toLowerCase().includes(q)) return false;
+    // Hide Done tasks by default — attended history lives in Attendance tab
+    // Only show Done if user explicitly selects "Done" from status filter
+    if (st) {
+      if (computeStatus(t) !== st) return false;
+    } else {
+      if (t.status === 'Done') return false;
+    }
 
     // Date filter — applied to nextDue date
     if (mode === 'overdue') {
@@ -2069,58 +2169,52 @@ function renderSchedule() {
     return true;
   });
 
-  // Show count
+  // Sort by nextDue ascending, Done tasks go to bottom
+  tasks = tasks.slice().sort((a,b) => {
+    const sa = computeStatus(a), sb = computeStatus(b);
+    if (sa==='Done' && sb!=='Done') return 1;
+    if (sa!=='Done' && sb==='Done') return -1;
+    return (a.nextDue||'').localeCompare(b.nextDue||'');
+  });
+
   const countEl = document.getElementById('scheduleCount');
   if (countEl) countEl.textContent = tasks.length ? `${tasks.length} task${tasks.length>1?'s':''} shown` : '';
 
-  // Sort by nextDue ascending
-  tasks = tasks.slice().sort((a,b) => (a.nextDue||'').localeCompare(b.nextDue||''));
-
-  // ── Edit/Delete/Attend permission ──
-  // Admin: edit any, delete any
-  // Maintenance: edit any, NO delete
-  // Technician / Dept Owner: edit & attend only their OWN assigned tasks, NO delete
   const isAdmin   = role === 'Admin';
   const isSup     = role === 'Maintenance';
   const isManager = role === 'Manager';
-  const canEditAny = isAdmin || isSup;
 
   const tb = document.getElementById('scheduleTbody');
   if (!tasks.length) {
-    tb.innerHTML = `<tr><td colspan="9" class="empty-state">${mode?'No PM tasks found for the selected date filter.':'No PM tasks found'}</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="10" class="empty-state">${mode?'No PM tasks found for the selected filter.':'No PM tasks scheduled'}</td></tr>`;
     return;
   }
 
   tb.innerHTML = tasks.map(t => {
     const s    = computeStatus(t);
     const diff = daysDiff(t.nextDue, td);
-    const rc   = s==='Overdue' ? 'overdue-row' : diff<=3&&s!=='Done' ? 'due-soon' : '';
-
-    // Per-task permissions
-    const isOwn     = t.assignedTo === state.currentUser?.name;
+    const rc   = s==='Overdue' ? 'overdue-row' : diff<=3&&s!=='Done' ? 'due-soon' : s==='Done' ? 'done-row' : '';
+    const isOwn       = t.assignedTo === state.currentUser?.name;
     const isDeptOwner = role === 'Department Owner';
-    const canEdit   = isAdmin || isSup;                          // Admin and Maintenance only
-    const canDel    = isAdmin || isSup;                          // Admin and Maintenance only
-    // canAttend: assigned user can attend if not Done, OR if Done but nextDue is in current month (next cycle due this month)
-    const currentMonth = td.substring(0, 7);
-    const nextDueThisMonth = t.nextDue && t.nextDue.substring(0, 7) === currentMonth;
-    const canAttend = isOwn && !isDeptOwner && (s !== 'Done' || nextDueThisMonth);
-    const canAssign = isSup || isManager;                      // Maintenance and Manager can assign technicians
-    // Maintenance (Supervisor) can close overdue tasks with a reason
+    const canEdit     = isAdmin || isSup;
+    const canDel      = isAdmin || isSup || isManager;
+    const canAttend   = isOwn && !isDeptOwner && s !== 'Done';
+    const canAssign   = isSup || isManager;
     const canCloseOverdue = s === 'Overdue' && isSup;
 
     return `<tr class="${rc}">
       <td><strong>${t.asset}</strong>${t.priority==='Critical'?'<span style="color:var(--red);margin-left:5px;font-size:10px;">●CRIT</span>':t.priority==='High'?'<span style="color:var(--yellow);margin-left:5px;font-size:10px;">●HIGH</span>':''}</td>
-      <td>${t.dept}</td><td>${t.area||'<span style="color:var(--text3);font-size:11px;">—</span>'}</td><td>${freqBadge(t.freq)}</td><td>${fmtDate(t.planDate)}</td>
+      <td>${t.dept}</td><td>${t.area||'<span style="color:var(--text3);font-size:11px;">—</span>'}</td><td>${freqBadge(t.freq)}</td>
+      <td>${fmtDate(t.planDate)}</td>
       <td class="${diff<=3&&s!=='Done'?'due-highlight':''}">${fmtDate(t.nextDue)}</td>
       <td>${t.assignedTo||'—'}</td><td>${t.deptOwner||'—'}</td><td>${statusBadge(s)}</td>
       <td style="white-space:nowrap;">
         <button class="btn-sm" onclick="viewPM('${t.id}')">View</button>
-        ${canAssign ? `<button class="btn-sm" onclick="openAssignModal('${t.id}')" style="margin-left:4px;background:rgba(26,95,160,0.10);color:var(--blue);">👤 Assign</button>` : ''}
-        ${canEdit   ? `<button class="btn-sm" onclick="openPMModal('${t.id}')" style="margin-left:4px;">Edit</button>` : ''}
-        ${canAttend ? `<button class="btn-sm green-btn" onclick="openAttend('${t.id}')" style="margin-left:4px;">✓ Attend</button>` : ''}
-        ${canCloseOverdue ? `<button class="btn-sm" onclick="openOverdueModal('${t.id}')" style="margin-left:4px;background:rgba(124,58,237,.1);color:#7c3aed;border-color:#a78bfa;" title="Close overdue with reason — won't affect your performance">⚠ Close Overdue</button>` : ''}
-        ${canDel    ? `<button class="btn-sm danger" onclick="deletePM('${t.id}')" style="margin-left:4px;">🗑 Delete</button>` : ''}
+        ${canAssign   ? `<button class="btn-sm" onclick="openAssignModal('${t.id}')" style="margin-left:4px;background:rgba(26,95,160,.1);color:var(--blue);">👤 Assign</button>` : ''}
+        ${canEdit     ? `<button class="btn-sm" onclick="openPMModal('${t.id}')" style="margin-left:4px;">Edit</button>` : ''}
+        ${canAttend   ? `<button class="btn-sm green-btn" onclick="openAttend('${t.id}')" style="margin-left:4px;font-weight:700;">✓ Attend</button>` : ''}
+        ${canCloseOverdue ? `<button class="btn-sm" onclick="openOverdueModal('${t.id}')" style="margin-left:4px;background:rgba(124,58,237,.1);color:#7c3aed;border-color:#a78bfa;">⚠ Close Overdue</button>` : ''}
+        ${canDel      ? `<button class="btn-sm danger" onclick="deletePM('${t.id}')" style="margin-left:4px;">🗑 Delete</button>` : ''}
       </td>
     </tr>`;
   }).join('');
@@ -2685,15 +2779,15 @@ function openAttend(id) {
   attendingPMId = id;
   const t = state.pmTasks.find(x=>x.id===id);
 
-  // Always use the current active cycle's plan date:
-  // if planDate < nextDue (rolled forward after attendance), nextDue IS the current plan
-  const effectivePlanDate = (t.planDate < t.nextDue) ? t.nextDue : t.planDate;
-  attendingPlanDate = effectivePlanDate;
+  // planDate = this cycle's scheduled date (always t.planDate)
+  attendingPlanDate = snapToSunday(t.planDate);
+  const displayNextDue = snapToSunday(t.nextDue);
 
   document.getElementById('attAssetLabel').textContent = t.asset + ' — ' + t.dept;
-  document.getElementById('attPlanLabel').textContent  = fmtDate(effectivePlanDate) + ' (Sunday)';
-  // Default actual date to the plan Sunday → gap starts at On-Time
-  document.getElementById('attActualDate').value = effectivePlanDate;
+  document.getElementById('attPlanLabel').textContent  =
+    fmtDate(attendingPlanDate) + (displayNextDue !== attendingPlanDate ? '  |  Due: ' + fmtDate(displayNextDue) : '');
+  // Default actual date to today
+  document.getElementById('attActualDate').value = today();
   document.getElementById('attBy').value = state.currentUser.name;
   document.getElementById('attRemarks').value = '';
   // Reset spare parts
@@ -2859,18 +2953,25 @@ function saveAttendance() {
   state.attendance.push(log);
   fbSet('attendance/'+log.id, log);
 
-  // Determine next due date based on user's choice
-  const nextDueChoice = document.querySelector('input[name="nextDueChoice"]:checked')?.value || 'advance';
-  if (nextDueChoice === 'same') {
-    // Keep same planned date — reopen task as Pending
-    t.status  = 'Pending';
-  } else {
-    // Advance to next occurrence
-    t.nextDue  = nextDueAfter(t.nextDue, t.freq);
-    t.planDate = t.nextDue;   // new cycle's plan date = new nextDue Sunday
-    t.status   = 'Pending';   // reset so canAttend works for next cycle without re-login
-  }
+  // Mark this task Done
+  t.status = 'Done';
   fbSet('pmTasks/'+t.id, t);
+
+  // Auto-create the next occurrence
+  const nextPlanDate = snapToSunday(t.nextDue); // always land on Sunday
+  const nextNextDue  = nextDueAfter(nextPlanDate, t.freq);
+  if (nextNextDue) {
+    const nxt = {
+      id: 'pm' + Date.now(),
+      asset: t.asset, dept: t.dept, area: t.area||'', freq: t.freq,
+      planDate: nextPlanDate, nextDue: nextNextDue,
+      leadTime: t.leadTime||3, assignedTo: t.assignedTo||'',
+      deptOwner: t.deptOwner||'', desc: t.desc||'', priority: t.priority||'Normal',
+      status: 'Scheduled'
+    };
+    state.pmTasks.push(nxt);
+    fbSet('pmTasks/' + nxt.id, nxt);
+  }
 
   // Create pending confirmation for Dept Owner
   if (t.deptOwner) {
@@ -2891,11 +2992,125 @@ function saveAttendance() {
   }
 
   closeAttendModal();
-  if (!firebaseMode) { renderSchedule(); renderDashboard(); renderAttendance(); checkAlerts(); updateConfirmBadge(); }
+  // Always re-render immediately for both Firebase and offline modes
+  renderSchedule(); renderDashboard(); renderAttendance(); checkAlerts(); updateConfirmBadge();
 }
 
 // =========================================================
 // ADMIN — Equipment Masterlist
+// =========================================================
+// =========================================================
+// EQUIPMENT REGISTER SECTION
+// =========================================================
+function renderEqRegister() {
+  const depts = state.departments||[];
+  const dSel  = document.getElementById('eqregDeptFilter');
+  if (dSel) {
+    const cur = dSel.value;
+    dSel.innerHTML = '<option value="">All Departments</option>';
+    depts.forEach(d => dSel.insertAdjacentHTML('beforeend',`<option value="${d}">${d}</option>`));
+    dSel.value = cur;
+  }
+  const deptF = dSel?.value||'', pmF = document.getElementById('eqregPMFilter')?.value||'';
+  const q = (document.getElementById('eqregSearch')?.value||'').toLowerCase();
+  const td = today();
+  let rows = [];
+  depts.forEach(dept => {
+    if (deptF && dept!==deptF) return;
+    (state.equipment&&state.equipment[dept]||[]).forEach(eq => {
+      const en = eq.name.toLowerCase();
+      const task = (state.pmTasks||[]).find(t =>
+        t.dept===dept && computeStatus(t)!=='Done' &&
+        (t.asset.toLowerCase()===en || t.asset.toLowerCase().startsWith(en))
+      );
+      const attLogs = (state.attendance||[])
+        .filter(a=>a.dept===dept&&a.asset.toLowerCase().startsWith(en))
+        .sort((a,b)=>(b.actualDate||'').localeCompare(a.actualDate||''));
+      rows.push({dept, name:eq.name, tag:eq.tag||'', task, lastAtt:attLogs[0]||null});
+    });
+  });
+  if (pmF==='yes') rows=rows.filter(r=>r.task);
+  if (pmF==='no')  rows=rows.filter(r=>!r.task);
+  if (q) rows=rows.filter(r=>r.name.toLowerCase().includes(q)||(r.tag||'').toLowerCase().includes(q)||r.dept.toLowerCase().includes(q));
+  const ce = document.getElementById('eqregCount');
+  if (ce) ce.textContent = rows.length+' equipment';
+  const tb = document.getElementById('eqregTbody');
+  if (!rows.length){tb.innerHTML=`<tr><td colspan="10" class="empty-state">No equipment found.</td></tr>`;return;}
+  const role=state.currentUser?.role, canAdd=role==='Admin'||role==='Maintenance';
+  tb.innerHTML = rows.map((r,i)=>{
+    const t=r.task, s=t?computeStatus(t):null;
+    const badge = !t
+      ? `<span style="background:#fce4e6;color:#8a1020;border:1px solid #e06070;border-radius:10px;padding:2px 9px;font-size:11px;font-weight:700;">❌ No Plan</span>`
+      : s==='Overdue'
+        ? `<span style="background:#fce4e6;color:#8a1020;border:1px solid #e06070;border-radius:10px;padding:2px 9px;font-size:11px;font-weight:700;">🔴 Overdue</span>`
+        : `<span style="background:#d8eaf8;color:#0f4a80;border:1px solid #6aaae0;border-radius:10px;padding:2px 9px;font-size:11px;font-weight:700;">✅ Planned</span>`;
+    const last = r.lastAtt
+      ? `<span style="color:var(--green);font-weight:600;">${fmtDate(r.lastAtt.actualDate)}</span><br><span style="font-size:10px;color:var(--text3);">${r.lastAtt.attendedBy||''}</span>`
+      : '<span style="color:var(--text3);">Never</span>';
+    const diff = t?daysDiff(t.nextDue,td):999;
+    const nd = t?`<span class="${diff<=3&&s!=='Done'?'due-highlight':''}">${fmtDate(t.nextDue)}</span>`:'<span style="color:var(--text3);">—</span>';
+    const sd=r.dept.replace(/'/g,"\'"), sn=r.name.replace(/'/g,"\'");
+    const act = !t&&canAdd
+      ? `<button class="btn-sm" onclick="openPMModalForEqR('${sd}','${sn}')" style="font-size:11px;background:rgba(26,95,160,.1);color:var(--blue);border-color:var(--blue);">+ Plan PM</button>`
+      : t&&t.assignedTo===state.currentUser?.name&&role!=='Department Owner'
+        ? `<button class="btn-sm green-btn" onclick="openAttend('${t.id}')" style="font-size:11px;">✓ Attend</button>`
+        : t ? `<button class="btn-sm" onclick="viewPM('${t.id}')" style="font-size:11px;">View</button>` : '';
+    return `<tr class="${s==='Overdue'?'overdue-row':diff<=3&&s!=='Done'?'due-soon':''}">
+      <td style="color:var(--text3);font-size:12px;">${i+1}</td>
+      <td><strong>${r.name}</strong></td><td style="color:var(--teal);font-size:12px;">${r.tag||'—'}</td>
+      <td>${r.dept}</td><td style="text-align:center;">${badge}</td>
+      <td>${t?freqBadge(t.freq):'—'}</td><td>${last}</td><td>${nd}</td>
+      <td>${t?t.assignedTo||'—':'—'}</td><td>${t?statusBadge(s):'—'}</td><td>${act}</td>
+    </tr>`;
+  }).join('');
+}
+function openPMModalForEqR(dept,name){
+  showSection('schedule');
+  setTimeout(()=>{
+    openPMModal();
+    const dEl=document.getElementById('pmDept');
+    if(dEl){dEl.value=dept;if(typeof onPMDeptChange==='function')onPMDeptChange();}
+    setTimeout(()=>{const a=document.getElementById('pmAsset');if(a)a.value=name;},100);
+  },150);
+}
+
+// =========================================================
+// PM PLANS REGISTER SECTION
+// =========================================================
+function renderPMPlans(){
+  const depts=state.departments||[];
+  const dSel=document.getElementById('plansDepFilter');
+  if(dSel){const cur=dSel.value;dSel.innerHTML='<option value="">All Departments</option>';depts.forEach(d=>dSel.insertAdjacentHTML('beforeend',`<option value="${d}">${d}</option>`));dSel.value=cur;}
+  const deptF=dSel?.value||'',freqF=document.getElementById('plansFreqFilter')?.value||'',stF=document.getElementById('plansStatusFilter')?.value||'';
+  const q=(document.getElementById('plansSearch')?.value||'').toLowerCase(), td=today();
+  let tasks=(state.pmTasks||[]).filter(t=>{
+    const s=computeStatus(t);
+    if(deptF&&t.dept!==deptF)return false;
+    if(freqF&&t.freq!==freqF)return false;
+    if(stF&&s!==stF)return false;
+    if(q&&!t.asset.toLowerCase().includes(q))return false;
+    return true;
+  });
+  tasks=tasks.slice().sort((a,b)=>{const sa=computeStatus(a),sb=computeStatus(b);if(sa==='Done'&&sb!=='Done')return 1;if(sa!=='Done'&&sb==='Done')return -1;return(a.nextDue||'').localeCompare(b.nextDue||'');});
+  const ce=document.getElementById('plansCount');if(ce)ce.textContent=tasks.length+' plans';
+  const tb=document.getElementById('plansTbody');
+  if(!tasks.length){tb.innerHTML=`<tr><td colspan="11" class="empty-state">No PM plans found.</td></tr>`;return;}
+  tb.innerHTML=tasks.map((t,i)=>{
+    const s=computeStatus(t),diff=daysDiff(t.nextDue,td);
+    const rc=s==='Overdue'?'overdue-row':diff<=3&&s!=='Done'?'due-soon':s==='Done'?'done-row':'';
+    const pc=t.priority==='Critical'?'var(--red)':t.priority==='High'?'var(--yellow)':'var(--text2)';
+    return `<tr class="${rc}">
+      <td style="color:var(--text3);font-size:12px;">${i+1}</td>
+      <td><strong>${t.asset}</strong>${t.priority==='Critical'?'<span style="color:var(--red);font-size:10px;margin-left:4px;">●CRIT</span>':t.priority==='High'?'<span style="color:var(--yellow);font-size:10px;margin-left:4px;">●HIGH</span>':''}</td>
+      <td>${t.dept}</td><td>${t.area||'—'}</td><td>${freqBadge(t.freq)}</td>
+      <td>${fmtDate(t.planDate)}</td><td class="${diff<=3&&s!=='Done'?'due-highlight':''}">${fmtDate(t.nextDue)}</td>
+      <td>${t.assignedTo||'—'}</td><td>${t.deptOwner||'—'}</td>
+      <td style="font-weight:600;color:${pc};font-size:12px;">${t.priority||'Normal'}</td>
+      <td>${statusBadge(s)}</td>
+    </tr>`;
+  }).join('');
+}
+
 // =========================================================
 function renderAdmin() {
   populateFilters();
@@ -2969,12 +3184,34 @@ function addEquipment() {
   if (!state.equipment) state.equipment = {};
   if (!state.equipment[dept]) state.equipment[dept] = [];
   if (state.equipment[dept].some(e=>e.name.toLowerCase()===name.toLowerCase())) { alert('Already exists in '+dept); return; }
-  state.equipment[dept].push({id:'eq'+Date.now(), name, tag});
+  const eqId = 'eq'+Date.now();
+  state.equipment[dept].push({id:eqId, name, tag});
   document.getElementById('eqNameInput').value = '';
   document.getElementById('eqTagInput').value  = '';
   eqViewDept = dept;
   pushConfig();
   renderAdmin(); populateFilters();
+  // Auto-create PM plan if frequency selected
+  const autoFreq = document.getElementById('eqFreqSel')?.value || '';
+  if (autoFreq) {
+    const snappedPlan = snapToSunday(today());
+    const firstDue    = nextDueAfter(snappedPlan, autoFreq);
+    if (firstDue) {
+      const nt = {
+        id: 'pm' + Date.now(),
+        asset: name + (tag ? ' ['+tag+']' : ''),
+        dept, area: '', freq: autoFreq,
+        planDate: snappedPlan, nextDue: firstDue,
+        leadTime: 3, assignedTo: '', deptOwner: '', desc: '', priority: 'Normal',
+        status: 'Scheduled'
+      };
+      state.pmTasks.push(nt);
+      fbSet('pmTasks/' + nt.id, nt);
+      toast('✅ Equipment added & PM auto-planned (' + autoFreq + ')','ok');
+    }
+  } else {
+    toast('Equipment added. Set a PM frequency to auto-plan.','ok');
+  }
 }
 
 function removeEquipment(dept, id) {
@@ -3593,6 +3830,76 @@ function saveOverdueClose() {
   closeOverdueModal();
   if (!firebaseMode) { renderSchedule(); renderDashboard(); renderAttendance(); checkAlerts(); }
   toast('Overdue closed & rescheduled to ' + fmtDate(reschedDate) + ' ✅', 'ok');
+}
+
+// =========================================================
+// SCHEDULE RECOVERY TOOLS — Admin only
+// =========================================================
+function regenerateMissingTasks() {
+  const msg = document.getElementById('recoveryMsg');
+  msg.style.color = 'var(--text2)';
+  msg.textContent = 'Scanning…';
+
+  const doneTasks = state.pmTasks.filter(t => t.status === 'Done');
+  let created = 0;
+
+  doneTasks.forEach(t => {
+    // Check if a next-cycle task already exists for this asset+dept
+    const nextPlanDate = snapToSunday(t.nextDue);
+    const alreadyExists = state.pmTasks.some(x =>
+      x.id !== t.id &&
+      x.asset === t.asset &&
+      x.dept  === t.dept &&
+      x.planDate === nextPlanDate &&
+      x.status !== 'Done'
+    );
+
+    if (!alreadyExists) {
+      const nextNextDue = nextDueAfter(nextPlanDate, t.freq);
+      if (!nextNextDue) return;
+
+      const nxt = {
+        id: 'pm' + Date.now() + Math.random().toString(36).slice(2,6),
+        asset:      t.asset,
+        dept:       t.dept,
+        area:       t.area       || '',
+        freq:       t.freq,
+        planDate:   nextPlanDate,
+        nextDue:    nextNextDue,
+        leadTime:   t.leadTime   || 3,
+        assignedTo: t.assignedTo || '',
+        technician: t.technician || '',
+        deptOwner:  t.deptOwner  || '',
+        desc:       t.desc       || '',
+        priority:   t.priority   || 'Normal',
+        status:     'Scheduled'
+      };
+      state.pmTasks.push(nxt);
+      fbSet('pmTasks/' + nxt.id, nxt);
+      created++;
+    }
+  });
+
+  setTimeout(() => {
+    renderSchedule();
+    renderDashboard();
+    checkAlerts();
+    msg.style.color = created > 0 ? 'var(--green)' : 'var(--text2)';
+    msg.textContent = created > 0
+      ? `✅ Created ${created} missing task${created > 1 ? 's' : ''}. Check PM Schedule.`
+      : '✓ All next-cycle tasks already exist — no action needed.';
+  }, 500);
+}
+
+function fixDoneTasksInSchedule() {
+  const msg = document.getElementById('recoveryMsg');
+  // Done tasks are now hidden by the renderSchedule filter
+  // This just re-renders to apply the filter
+  renderSchedule();
+  renderDashboard();
+  msg.style.color = 'var(--green)';
+  msg.textContent = '✅ PM Schedule refreshed — Done tasks hidden.';
+  setTimeout(() => msg.textContent = '', 3000);
 }
 
 
