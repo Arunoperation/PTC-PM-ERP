@@ -1368,6 +1368,8 @@ function initApp() {
       if (mine.length > 0) showNotifPopup(mine[0]);
     }, 1000);
   }
+  // Auto-regenerate missing next-cycle tasks silently on every login
+  if (isAdmin) setTimeout(autoRegenerateMissingTasks, 1500);
 }
 
 // =========================================================
@@ -3845,6 +3847,39 @@ function saveOverdueClose() {
 // =========================================================
 // SCHEDULE RECOVERY TOOLS — Admin only
 // =========================================================
+
+// Silent version — runs automatically on Admin login
+function autoRegenerateMissingTasks() {
+  const doneTasks = state.pmTasks.filter(t => t.status === 'Done');
+  let created = 0;
+  doneTasks.forEach(t => {
+    const nextPlanDate = snapToSunday(t.nextDue);
+    const alreadyExists = state.pmTasks.some(x =>
+      x.id !== t.id && x.asset === t.asset && x.dept === t.dept &&
+      x.status !== 'Done' && x.planDate >= t.planDate
+    );
+    if (!alreadyExists) {
+      const nextNextDue = nextDueAfter(nextPlanDate, t.freq);
+      if (!nextNextDue) return;
+      const nxt = {
+        id: 'pm'+Date.now()+Math.random().toString(36).slice(2,6),
+        asset:t.asset, dept:t.dept, area:t.area||'', freq:t.freq,
+        planDate:nextPlanDate, nextDue:nextNextDue, leadTime:t.leadTime||3,
+        assignedTo:t.assignedTo||'', technician:t.technician||'',
+        deptOwner:t.deptOwner||'', desc:t.desc||'',
+        priority:t.priority||'Normal', status:'Scheduled'
+      };
+      state.pmTasks.push(nxt);
+      fbSet('pmTasks/'+nxt.id, nxt);
+      created++;
+    }
+  });
+  if (created > 0) {
+    renderSchedule(); renderDashboard(); checkAlerts();
+    toast(`♻ ${created} missing PM task${created>1?'s':''} auto-regenerated`, 'ok');
+  }
+}
+
 function regenerateMissingTasks() {
   const msg = document.getElementById('recoveryMsg');
   msg.style.color = 'var(--text2)';
