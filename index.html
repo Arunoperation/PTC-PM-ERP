@@ -1167,11 +1167,15 @@ function setupListeners() {
   db.ref('pmTasks').on('value', snap => {
     state.pmTasks = snap.val() ? Object.values(snap.val()) : [];
     migrateSundayDates();
+    dedupeAttendedTasks();
     if (state.currentUser) refreshVisible();
   });
 
   db.ref('attendance').on('value', snap => {
     state.attendance = snap.val() ? Object.values(snap.val()) : [];
+    // Attendance may arrive after tasks — re-run the ghost cleanup now that we
+    // know what has been attended, then refresh whatever view is open.
+    if (dedupeAttendedTasks() && state.currentUser) refreshVisible();
     if (state.currentUser && document.getElementById('sec-attendance').classList.contains('active')) renderAttendance();
   });
 
@@ -1215,6 +1219,29 @@ function migrateSundayDates() {
     }
   });
   return changed;
+}
+
+// ── Self-healing: remove ghost overdue tasks left behind by duplicates ──
+// Runs whenever tasks or attendance load. If a still-open (not Done) task
+// describes a cycle that has already been attended — either because an
+// attendance log exists for it, or because a Done sibling task covers the same
+// cycle — it is a leftover duplicate that keeps firing a false Overdue alert.
+// We delete it from Firebase so the overdue count the user sees is correct,
+// and so this auto-corrects existing data without any manual deletion.
+function dedupeAttendedTasks() {
+  if (!state.pmTasks || !state.pmTasks.length) return false;
+  const doneTasks = state.pmTasks.filter(t => t.status === 'Done');
+  const removeIds = [];
+  state.pmTasks.forEach(t => {
+    if (t.status === 'Done') return;
+    const attended   = hasAttendanceForCycle(t);
+    const doneSibling = doneTasks.some(d => d.id !== t.id && sameCycle(d, t));
+    if (attended || doneSibling) removeIds.push(t.id);
+  });
+  if (!removeIds.length) return false;
+  removeIds.forEach(id => fbRemove('pmTasks/' + id));
+  state.pmTasks = state.pmTasks.filter(t => !removeIds.includes(t.id));
+  return true;
 }
 
 function seedSampleTasks() {
@@ -1368,8 +1395,6 @@ function initApp() {
       if (mine.length > 0) showNotifPopup(mine[0]);
     }, 1000);
   }
-  // Auto-regenerate missing next-cycle tasks silently on every login
-  if (isAdmin) setTimeout(autoRegenerateMissingTasks, 1500);
 }
 
 // =========================================================
@@ -1379,6 +1404,33 @@ function initApp() {
 const localDateStr = d => { const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),dd=String(d.getDate()).padStart(2,'0'); return y+'-'+m+'-'+dd; };
 const today  = () => localDateStr(new Date());
 const daysDiff = (a,b) => Math.round((new Date(a+'T00:00:00') - new Date(b+'T00:00:00'))/86400000);
+
+// ── Duplicate-detection helpers ─────────────────────────────────────────────
+// Normalise an asset string so "Shot Blasting m/c , 72-7WA" and
+// "Shot blasting m/c .72-2WA" style differences (case, spaces, punctuation)
+// don't cause the same machine to be treated as two different assets.
+function normAsset(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9]/g,''); }
+
+// Two task records describe the same PM occurrence when they share the same
+// asset (normalised), the same department, and the same cycle date. A cycle is
+// identified by planDate OR nextDue, because those two fields can differ
+// between duplicate copies created by different code paths.
+function sameCycle(a,b){
+  if (normAsset(a.asset)!==normAsset(b.asset)) return false;
+  if ((a.dept||'')!==(b.dept||'')) return false;
+  return a.planDate===b.planDate || a.nextDue===b.nextDue ||
+         a.planDate===b.nextDue  || a.nextDue===b.planDate;
+}
+
+// Has this PM cycle already been attended (i.e. an attendance log exists for the
+// same asset+dept on the same plan/actual date)? Used to suppress ghost alerts.
+function hasAttendanceForCycle(t){
+  return (state.attendance||[]).some(l =>
+    normAsset(l.asset)===normAsset(t.asset) &&
+    (l.dept||'')===(t.dept||'') &&
+    (l.planDate===t.planDate || l.planDate===t.nextDue || l.actualDate===t.nextDue)
+  );
+}
 const fmtDate  = d => d ? new Date(d+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : '—';
 
 function statusBadge(s) {
@@ -2245,7 +2297,7 @@ function checkAlerts() {
     if (role === 'Department Owner') return t.deptOwner  === me;
     return true; // Admin, Manager see all
   });
-  const alerts = visible.filter(t=>{ const s=computeStatus(t); return s==='Overdue'||s==='Pending'; });
+  const alerts = visible.filter(t=>{ const s=computeStatus(t); return (s==='Overdue'||s==='Pending') && !hasAttendanceForCycle(t); });
   const cnt = alerts.length;
   const b = document.getElementById('alertBadge');
   if (b) { b.style.display=cnt?'inline':'none'; b.textContent=cnt; }
@@ -2269,7 +2321,7 @@ function renderAlerts() {
     if (role === 'Department Owner') return t.deptOwner  === me;
     return true; // Admin, Manager see all
   });
-  const alerts = visible.filter(t=>{ const s=computeStatus(t); return s==='Overdue'||s==='Pending'; });
+  const alerts = visible.filter(t=>{ const s=computeStatus(t); return (s==='Overdue'||s==='Pending') && !hasAttendanceForCycle(t); });
   const tb = document.getElementById('alertsTbody');
   if (!alerts.length) { tb.innerHTML='<tr><td colspan="7" class="empty-state" style="color:var(--green)">✓ No active alerts</td></tr>'; return; }
   tb.innerHTML = alerts.map(t => {
@@ -2968,6 +3020,13 @@ function saveAttendance() {
   // Mark this task Done
   t.status = 'Done';
   fbSet('pmTasks/'+t.id, t);
+
+  // Remove any OTHER still-open task that covers this same cycle (duplicate
+  // records created by earlier regenerate runs). Attending one copy must clear
+  // its twins, otherwise they linger as false Overdue alerts.
+  const twins = state.pmTasks.filter(x => x.id!==t.id && x.status!=='Done' && sameCycle(x, t));
+  twins.forEach(x => fbRemove('pmTasks/'+x.id));
+  if (twins.length) state.pmTasks = state.pmTasks.filter(x => !twins.some(w => w.id===x.id));
 
   // Auto-create the next occurrence
   const nextPlanDate = snapToSunday(t.nextDue); // always land on Sunday
@@ -3847,39 +3906,6 @@ function saveOverdueClose() {
 // =========================================================
 // SCHEDULE RECOVERY TOOLS — Admin only
 // =========================================================
-
-// Silent version — runs automatically on Admin login
-function autoRegenerateMissingTasks() {
-  const doneTasks = state.pmTasks.filter(t => t.status === 'Done');
-  let created = 0;
-  doneTasks.forEach(t => {
-    const nextPlanDate = snapToSunday(t.nextDue);
-    const alreadyExists = state.pmTasks.some(x =>
-      x.id !== t.id && x.asset === t.asset && x.dept === t.dept &&
-      x.status !== 'Done' && x.planDate >= t.planDate
-    );
-    if (!alreadyExists) {
-      const nextNextDue = nextDueAfter(nextPlanDate, t.freq);
-      if (!nextNextDue) return;
-      const nxt = {
-        id: 'pm'+Date.now()+Math.random().toString(36).slice(2,6),
-        asset:t.asset, dept:t.dept, area:t.area||'', freq:t.freq,
-        planDate:nextPlanDate, nextDue:nextNextDue, leadTime:t.leadTime||3,
-        assignedTo:t.assignedTo||'', technician:t.technician||'',
-        deptOwner:t.deptOwner||'', desc:t.desc||'',
-        priority:t.priority||'Normal', status:'Scheduled'
-      };
-      state.pmTasks.push(nxt);
-      fbSet('pmTasks/'+nxt.id, nxt);
-      created++;
-    }
-  });
-  if (created > 0) {
-    renderSchedule(); renderDashboard(); checkAlerts();
-    toast(`♻ ${created} missing PM task${created>1?'s':''} auto-regenerated`, 'ok');
-  }
-}
-
 function regenerateMissingTasks() {
   const msg = document.getElementById('recoveryMsg');
   msg.style.color = 'var(--text2)';
@@ -3889,19 +3915,20 @@ function regenerateMissingTasks() {
   let created = 0;
 
   doneTasks.forEach(t => {
-    // Check if a next-cycle task already exists for this asset+dept
+    // Build the candidate next-cycle task first, then decide whether it's needed.
     const nextPlanDate = snapToSunday(t.nextDue);
-    const alreadyExists = state.pmTasks.some(x =>
-      x.id !== t.id &&
-      x.asset === t.asset &&
-      x.dept  === t.dept &&
-      x.planDate === nextPlanDate &&
-      x.status !== 'Done'
-    );
+    const nextNextDue  = nextDueAfter(nextPlanDate, t.freq);
+    if (!nextNextDue) return;
+    const candidate = { asset: t.asset, dept: t.dept, planDate: nextPlanDate, nextDue: nextNextDue };
+
+    // Skip if this cycle already exists in ANY form — including a Done copy
+    // (a completed cycle must never be regenerated) — matched by normalised
+    // asset + dept + cycle date, or if it has already been attended.
+    const alreadyExists =
+      state.pmTasks.some(x => x.id !== t.id && sameCycle(x, candidate)) ||
+      hasAttendanceForCycle(candidate);
 
     if (!alreadyExists) {
-      const nextNextDue = nextDueAfter(nextPlanDate, t.freq);
-      if (!nextNextDue) return;
 
       const nxt = {
         id: 'pm' + Date.now() + Math.random().toString(36).slice(2,6),
