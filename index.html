@@ -237,10 +237,10 @@ tr.done-row{background:#f0faf4;opacity:0.8;}
       <div class="role-btn" onclick="selectRole(this,'Technician')">Technician</div>
     </div>
     <label class="login-label">Your Name / Login ID</label>
-    <input class="login-field" id="loginName" type="text" placeholder="Name or Login ID…">
+    <input class="login-field" id="loginName" type="text" placeholder="Name or Login ID…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
     <label class="login-label">Enter PIN</label>
     <div class="pin-input-wrap">
-      <input class="pin-single" id="loginPin" type="password" placeholder="Enter PIN or password…" onkeydown="if(event.key==='Enter')doLogin()">
+      <input class="pin-single" id="loginPin" type="password" placeholder="Enter PIN or password…" autocomplete="new-password" onkeydown="if(event.key==='Enter')doLogin()">
       <button class="pin-eye" onclick="togglePin('loginPin',this)" tabindex="-1">👁</button>
     </div>
     <button class="btn-primary" onclick="doLogin()">LOGIN</button>
