@@ -1167,15 +1167,17 @@ function setupListeners() {
   db.ref('pmTasks').on('value', snap => {
     state.pmTasks = snap.val() ? Object.values(snap.val()) : [];
     migrateSundayDates();
-    dedupeAttendedTasks();
+    _tasksLoaded = true;
+    maybeRunGhostCleanup();
     if (state.currentUser) refreshVisible();
   });
 
   db.ref('attendance').on('value', snap => {
     state.attendance = snap.val() ? Object.values(snap.val()) : [];
-    // Attendance may arrive after tasks — re-run the ghost cleanup now that we
-    // know what has been attended, then refresh whatever view is open.
-    if (dedupeAttendedTasks() && state.currentUser) refreshVisible();
+    _attLoaded = true;
+    // Attendance may arrive after tasks — try the one-time ghost cleanup now
+    // that we know what has been attended.
+    if (maybeRunGhostCleanup() && state.currentUser) refreshVisible();
     if (state.currentUser && document.getElementById('sec-attendance').classList.contains('active')) renderAttendance();
   });
 
@@ -1228,18 +1230,44 @@ function migrateSundayDates() {
 // cycle — it is a leftover duplicate that keeps firing a false Overdue alert.
 // We delete it from Firebase so the overdue count the user sees is correct,
 // and so this auto-corrects existing data without any manual deletion.
+//
+// IMPORTANT: this runs from inside Firebase listeners. To avoid an infinite
+// re-trigger loop (each delete re-fires the pmTasks listener), it is:
+//   • one-shot per session  — guarded by _ghostCleanupDone
+//   • run only once BOTH tasks and attendance have loaded (_tasksLoaded/_attLoaded)
+//   • batched into a SINGLE multi-path update so it fires the listener only once
+let _ghostCleanupDone = false;
+let _tasksLoaded = false;
+let _attLoaded   = false;
+
+function maybeRunGhostCleanup() {
+  if (_ghostCleanupDone) return false;
+  if (!_tasksLoaded || !_attLoaded) return false; // wait until both datasets are in
+  return dedupeAttendedTasks();
+}
+
 function dedupeAttendedTasks() {
+  if (_ghostCleanupDone) return false;
   if (!state.pmTasks || !state.pmTasks.length) return false;
   const doneTasks = state.pmTasks.filter(t => t.status === 'Done');
   const removeIds = [];
   state.pmTasks.forEach(t => {
     if (t.status === 'Done') return;
-    const attended   = hasAttendanceForCycle(t);
+    const attended    = hasAttendanceForCycle(t);
     const doneSibling = doneTasks.some(d => d.id !== t.id && sameCycle(d, t));
     if (attended || doneSibling) removeIds.push(t.id);
   });
+  // Mark done BEFORE writing, so the listener re-fire triggered by our own
+  // delete is a no-op instead of recursing.
+  _ghostCleanupDone = true;
   if (!removeIds.length) return false;
-  removeIds.forEach(id => fbRemove('pmTasks/' + id));
+  // Single batched delete → one write, one listener re-fire (which is skipped
+  // by the guard above), instead of one write per ghost.
+  if (firebaseMode) {
+    const updates = {};
+    removeIds.forEach(id => { updates[id] = null; });
+    db.ref('pmTasks').update(updates);
+  }
   state.pmTasks = state.pmTasks.filter(t => !removeIds.includes(t.id));
   return true;
 }
