@@ -237,10 +237,10 @@ tr.done-row{background:#f0faf4;opacity:0.8;}
       <div class="role-btn" onclick="selectRole(this,'Technician')">Technician</div>
     </div>
     <label class="login-label">Your Name / Login ID</label>
-    <input class="login-field" id="loginName" type="text" placeholder="Name or Login ID…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    <input class="login-field" id="loginName" type="text" placeholder="Name or Login ID…" name="pm_user_field" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" readonly onfocus="this.removeAttribute('readonly')">
     <label class="login-label">Enter PIN</label>
     <div class="pin-input-wrap">
-      <input class="pin-single" id="loginPin" type="password" placeholder="Enter PIN or password…" autocomplete="new-password" onkeydown="if(event.key==='Enter')doLogin()">
+      <input class="pin-single" id="loginPin" type="password" placeholder="Enter PIN or password…" name="pm_pin_field" autocomplete="new-password" readonly onfocus="this.removeAttribute('readonly')" onkeydown="if(event.key==='Enter')doLogin()">
       <button class="pin-eye" onclick="togglePin('loginPin',this)" tabindex="-1">👁</button>
     </div>
     <button class="btn-primary" onclick="doLogin()">LOGIN</button>
@@ -658,8 +658,8 @@ tr.done-row{background:#f0faf4;opacity:0.8;}
       <div class="card" style="border-top-color:var(--yellow);margin-bottom:16px;">
         <div class="card-title"><span class="dot" style="background:var(--yellow)"></span> 🔧 Schedule Recovery Tools</div>
         <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.7;">
-          Use these tools if PM Schedule is missing auto-generated tasks after attendance was logged.
-          <strong style="color:var(--yellow);">Run once after deploying the updated file.</strong>
+          Next-cycle PMs are now planned <strong style="color:var(--green);">automatically</strong> whenever the app loads — no action needed.
+          These buttons are just a manual re-check if you ever want to force one.
         </div>
         <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
           <button class="btn-action" onclick="regenerateMissingTasks()" style="background:var(--teal);">
@@ -1168,7 +1168,7 @@ function setupListeners() {
     state.pmTasks = snap.val() ? Object.values(snap.val()) : [];
     migrateSundayDates();
     _tasksLoaded = true;
-    maybeRunGhostCleanup();
+    maybeRunPostLoad();
     if (state.currentUser) refreshVisible();
   });
 
@@ -1177,7 +1177,7 @@ function setupListeners() {
     _attLoaded = true;
     // Attendance may arrive after tasks — try the one-time ghost cleanup now
     // that we know what has been attended.
-    if (maybeRunGhostCleanup() && state.currentUser) refreshVisible();
+    if (maybeRunPostLoad() && state.currentUser) refreshVisible();
     if (state.currentUser && document.getElementById('sec-attendance').classList.contains('active')) renderAttendance();
   });
 
@@ -1223,53 +1223,73 @@ function migrateSundayDates() {
   return changed;
 }
 
-// ── Self-healing: remove ghost overdue tasks left behind by duplicates ──
-// Runs whenever tasks or attendance load. If a still-open (not Done) task
-// describes a cycle that has already been attended — either because an
-// attendance log exists for it, or because a Done sibling task covers the same
-// cycle — it is a leftover duplicate that keeps firing a false Overdue alert.
-// We delete it from Firebase so the overdue count the user sees is correct,
-// and so this auto-corrects existing data without any manual deletion.
-//
-// IMPORTANT: this runs from inside Firebase listeners. To avoid an infinite
-// re-trigger loop (each delete re-fires the pmTasks listener), it is:
-//   • one-shot per session  — guarded by _ghostCleanupDone
-//   • run only once BOTH tasks and attendance have loaded (_tasksLoaded/_attLoaded)
-//   • batched into a SINGLE multi-path update so it fires the listener only once
-let _ghostCleanupDone = false;
-let _tasksLoaded = false;
-let _attLoaded   = false;
+// ── Automatic post-load maintenance ─────────────────────────────────────────
+// Runs ONCE per session, only after BOTH tasks and attendance have loaded, and
+// writes everything in a SINGLE batched Firebase update. It does the two jobs
+// the admin previously had to trigger by hand:
+//   1. Ghost cleanup — remove still-open tasks for cycles already attended.
+//   2. Auto-planning  — create the next-cycle task for any completed PM that is
+//      missing one, so no manual "Regenerate" click is ever needed.
+// One-shot + batched is what prevents the listener-cascade freeze: our own write
+// re-fires the pmTasks listener exactly once, and the guard makes it a no-op.
+let _postLoadDone = false;
+let _tasksLoaded  = false;
+let _attLoaded    = false;
 
-function maybeRunGhostCleanup() {
-  if (_ghostCleanupDone) return false;
+function maybeRunPostLoad() {
+  if (_postLoadDone) return false;
   if (!_tasksLoaded || !_attLoaded) return false; // wait until both datasets are in
-  return dedupeAttendedTasks();
-}
+  _postLoadDone = true;                            // set BEFORE writing (breaks the loop)
 
-function dedupeAttendedTasks() {
-  if (_ghostCleanupDone) return false;
-  if (!state.pmTasks || !state.pmTasks.length) return false;
+  const updates   = {};                            // one batched multi-path update
   const doneTasks = state.pmTasks.filter(t => t.status === 'Done');
-  const removeIds = [];
+
+  // (1) Ghost cleanup: open tasks whose cycle is already attended or has a Done twin
+  const removeIds = new Set();
   state.pmTasks.forEach(t => {
     if (t.status === 'Done') return;
     const attended    = hasAttendanceForCycle(t);
     const doneSibling = doneTasks.some(d => d.id !== t.id && sameCycle(d, t));
-    if (attended || doneSibling) removeIds.push(t.id);
+    if (attended || doneSibling) { removeIds.add(t.id); updates[t.id] = null; }
   });
-  // Mark done BEFORE writing, so the listener re-fire triggered by our own
-  // delete is a no-op instead of recursing.
-  _ghostCleanupDone = true;
-  if (!removeIds.length) return false;
-  // Single batched delete → one write, one listener re-fire (which is skipped
-  // by the guard above), instead of one write per ghost.
-  if (firebaseMode) {
-    const updates = {};
-    removeIds.forEach(id => { updates[id] = null; });
-    db.ref('pmTasks').update(updates);
-  }
-  state.pmTasks = state.pmTasks.filter(t => !removeIds.includes(t.id));
+
+  // (2) Auto-plan the next cycle for every completed PM that is missing one
+  const created = computeMissingCycles(removeIds);
+  created.forEach(nxt => { updates[nxt.id] = nxt; });
+
+  if (!Object.keys(updates).length) return false;
+  if (firebaseMode) db.ref('pmTasks').update(updates);
+  // reflect locally so the first render after load is already correct
+  state.pmTasks = state.pmTasks.filter(t => !removeIds.has(t.id)).concat(created);
   return true;
+}
+
+// Pure helper (no writes): returns the next-cycle task objects that are missing
+// for completed PMs. `excludeIds` are records about to be removed, so their
+// presence must not count as an already-existing cycle. Shared by the automatic
+// post-load routine AND the manual "Regenerate" button so both behave identically.
+function computeMissingCycles(excludeIds) {
+  excludeIds = excludeIds || new Set();
+  const out = [];
+  const doneTasks = state.pmTasks.filter(t => t.status === 'Done');
+  doneTasks.forEach((t, i) => {
+    const nextPlanDate = snapToSunday(t.nextDue);
+    const nextNextDue  = nextDueAfter(nextPlanDate, t.freq);
+    if (!nextNextDue) return;
+    const candidate = { asset: t.asset, dept: t.dept, planDate: nextPlanDate, nextDue: nextNextDue };
+    const existsInDb    = state.pmTasks.some(x => x.id !== t.id && !excludeIds.has(x.id) && sameCycle(x, candidate));
+    const alreadyQueued = out.some(c => sameCycle(c, candidate));
+    if (existsInDb || alreadyQueued || hasAttendanceForCycle(candidate)) return;
+    out.push({
+      id: 'pm' + Date.now() + i + Math.random().toString(36).slice(2, 6),
+      asset: t.asset, dept: t.dept, area: t.area || '', freq: t.freq,
+      planDate: nextPlanDate, nextDue: nextNextDue,
+      leadTime: t.leadTime || 3, assignedTo: t.assignedTo || '',
+      technician: t.technician || '', deptOwner: t.deptOwner || '',
+      desc: t.desc || '', priority: t.priority || 'Normal', status: 'Scheduled'
+    });
+  });
+  return out;
 }
 
 function seedSampleTasks() {
@@ -3939,56 +3959,25 @@ function regenerateMissingTasks() {
   msg.style.color = 'var(--text2)';
   msg.textContent = 'Scanning…';
 
-  const doneTasks = state.pmTasks.filter(t => t.status === 'Done');
-  let created = 0;
-
-  doneTasks.forEach(t => {
-    // Build the candidate next-cycle task first, then decide whether it's needed.
-    const nextPlanDate = snapToSunday(t.nextDue);
-    const nextNextDue  = nextDueAfter(nextPlanDate, t.freq);
-    if (!nextNextDue) return;
-    const candidate = { asset: t.asset, dept: t.dept, planDate: nextPlanDate, nextDue: nextNextDue };
-
-    // Skip if this cycle already exists in ANY form — including a Done copy
-    // (a completed cycle must never be regenerated) — matched by normalised
-    // asset + dept + cycle date, or if it has already been attended.
-    const alreadyExists =
-      state.pmTasks.some(x => x.id !== t.id && sameCycle(x, candidate)) ||
-      hasAttendanceForCycle(candidate);
-
-    if (!alreadyExists) {
-
-      const nxt = {
-        id: 'pm' + Date.now() + Math.random().toString(36).slice(2,6),
-        asset:      t.asset,
-        dept:       t.dept,
-        area:       t.area       || '',
-        freq:       t.freq,
-        planDate:   nextPlanDate,
-        nextDue:    nextNextDue,
-        leadTime:   t.leadTime   || 3,
-        assignedTo: t.assignedTo || '',
-        technician: t.technician || '',
-        deptOwner:  t.deptOwner  || '',
-        desc:       t.desc       || '',
-        priority:   t.priority   || 'Normal',
-        status:     'Scheduled'
-      };
-      state.pmTasks.push(nxt);
-      fbSet('pmTasks/' + nxt.id, nxt);
-      created++;
-    }
-  });
+  // Auto-planning already runs on load; this button is now just a manual
+  // re-check. Uses the same shared logic, written as ONE batched update.
+  const created = computeMissingCycles();
+  if (created.length) {
+    const updates = {};
+    created.forEach(nxt => { updates[nxt.id] = nxt; });
+    if (firebaseMode) db.ref('pmTasks').update(updates);
+    state.pmTasks = state.pmTasks.concat(created);
+  }
 
   setTimeout(() => {
     renderSchedule();
     renderDashboard();
     checkAlerts();
-    msg.style.color = created > 0 ? 'var(--green)' : 'var(--text2)';
-    msg.textContent = created > 0
-      ? `✅ Created ${created} missing task${created > 1 ? 's' : ''}. Check PM Schedule.`
-      : '✓ All next-cycle tasks already exist — no action needed.';
-  }, 500);
+    msg.style.color = created.length > 0 ? 'var(--green)' : 'var(--text2)';
+    msg.textContent = created.length > 0
+      ? `✅ Created ${created.length} missing task${created.length > 1 ? 's' : ''}. Check PM Schedule.`
+      : '✓ Auto-planning is on — all next-cycle tasks already exist.';
+  }, 300);
 }
 
 function fixDoneTasksInSchedule() {
